@@ -8,9 +8,9 @@ import aiohttp
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
-from groq import AsyncGroq, Groq
+from groq import AsyncGroq
 
-from .modules.database import createDB, createTable, insertRow, readRow, try_read_row
+from .modules.database import insertRow, try_read_row
 from .modules.fernet import decrypt_message, encrypt_message
 from .modules.logs import Logs
 from .modules.message import Message
@@ -234,7 +234,7 @@ class Krorus(commands.Bot):
         member: discord.Member,
         before: discord.VoiceState,
         after: discord.VoiceState,
-    ):
+    ) -> None:
         if member.bot:
             return
 
@@ -263,7 +263,7 @@ class DecryptButton(discord.ui.View):
     @discord.ui.button(label="🔓 Descifrar Mensaje", style=discord.ButtonStyle.primary)
     async def decrypt_callback(
         self, button: discord.ui.Button, interaction: discord.Interaction
-    ):
+    ) -> None:
         if interaction.user.id != self.recipient_id:
             await interaction.response.send_message(
                 "❌ No tienes permiso para descifrar este mensaje.", ephemeral=True
@@ -271,7 +271,7 @@ class DecryptButton(discord.ui.View):
             return
 
         try:
-            decrypted_text = decrypt_message(self.encrypted_message, self.recipient_id)
+            decrypted_text: str = decrypt_message(self.encrypted_message, self.recipient_id)
             await interaction.response.send_message(
                 f"**Mensaje secreto:**\n{decrypted_text}", ephemeral=True
             )
@@ -289,15 +289,13 @@ class DecryptButton(discord.ui.View):
 )
 async def whisper(
     ctx: discord.ApplicationContext,
-    destinatario: discord.Option(
-        discord.SlashCommandOptionType.user, "El usuario que podrá leer el mensaje."
-    ),  # type: ignore
+    destinatario: discord.Option(discord.SlashCommandOptionType.user, "El usuario que podrá leer el mensaje."),  # type: ignore
     mensaje: discord.Option(str, "El mensaje secreto que quieres enviar."),  # type: ignore
-):
+) -> None:
     if destinatario is None:
         destinatario = ctx.author
 
-    encrypted_msg = encrypt_message(mensaje, destinatario.id)
+    encrypted_msg: str = encrypt_message(mensaje, destinatario.id)
     view = DecryptButton(encrypted_msg, destinatario.id)
 
     ROLE_PROTEGIDO_ID = BD[1]
@@ -330,7 +328,7 @@ async def whisper(
 
 
 @client.slash_command(name="append-alertdomain", description="placeholder")
-async def AAD(interaction: discord.Interaction, domain: str):
+async def AAD(interaction: discord.Interaction, domain: str) -> None:
     with open("scripts/alert_domains.json", "r") as f:
         data = js.load(f)
 
@@ -344,7 +342,7 @@ async def AAD(interaction: discord.Interaction, domain: str):
 
 
 @client.slash_command(name="append-whitelist", description="placeholder")
-async def AWL(interaction: discord.Interaction, domain: str):
+async def AWL(interaction: discord.Interaction, domain: str) -> None:
     with open("scripts/whitelist.json", "r") as f:
         data = js.load(f)["domains"]
 
@@ -369,7 +367,7 @@ async def set_data(
 
 
 @client.slash_command(name="list-users", description="")
-async def list_users(interaction: discord.Interaction):
+async def list_users(interaction: discord.Interaction) -> None:
     logs = Logs()
     users = logs.listUsers()
 
@@ -393,7 +391,7 @@ async def list_users(interaction: discord.Interaction):
 
 
 @client.slash_command(name="check-user", description="")
-async def check(interaction: discord.Interaction, member: discord.Member):
+async def check(interaction: discord.Interaction, member: discord.Member) -> None:
     logs = Logs()
     users = logs.listUsers()
 
@@ -407,7 +405,7 @@ async def check(interaction: discord.Interaction, member: discord.Member):
         )
         return
 
-    alert_list = "\n".join(
+    alert_list: str = "\n".join(
         [
             f"{alert['alert']} | :mailbox_with_mail: [Ir al mensaje]({alert['url']})"
             for alert in user_alerts
@@ -423,5 +421,5 @@ async def check(interaction: discord.Interaction, member: discord.Member):
     await interaction.response.send_message(embed=embed)
 
 
-def main():
+def main() -> None:
     client.run(os.getenv("TOKEN"))
