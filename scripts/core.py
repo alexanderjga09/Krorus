@@ -11,6 +11,7 @@ from groq import AsyncGroq, Groq
 
 from .modules.database import createDB, createTable, insertRow, readRow
 from .modules.fernet import decrypt_message, encrypt_message
+from .modules.logs import Logs
 from .modules.message import Message
 
 load_dotenv()
@@ -103,6 +104,13 @@ class Krorus(commands.Bot):
 
                     misconduct = await msg.Misconduct(GROQ_CLIENT)
                     if misconduct:
+                        logs = Logs()
+                        logs.addAlert(
+                            message.author.id,
+                            "Mensaje inapropiado (dicho a un protegido)",
+                            message.jump_url,
+                        )
+
                         await self._send_alert(
                             message,
                             "❗ Mensaje inapropiado",
@@ -122,10 +130,17 @@ class Krorus(commands.Bot):
 
                     misconduct = await msg.Misconduct(GROQ_CLIENT)
                     if misconduct:
+                        logs = Logs()
+                        logs.addAlert(
+                            message.author.id,
+                            "Mensaje inapropiado (protegido mencionados)",
+                            message.jump_url,
+                        )
+
                         await self._send_alert(
                             message,
                             "❗ Mensaje inapropiado",
-                            f"Protegidos mencionados: {', '.join(map(lambda m: m.mention if any(map(lambda r: r.id == BD[1], m.roles)) else '', members))}\n**Contenido:**\n```{message.content}```",
+                            f"Protegidos mencionados: {', '.join([m.mention for m in members if discord.utils.get(m.roles, id=BD[1])])}\n**Contenido:**\n```{message.content}```",
                         )
                     return
 
@@ -229,11 +244,11 @@ class Krorus(commands.Bot):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ):
-        if member.bot:
-            return
-
         BD = try_read_row()
         if not BD:
+            return
+
+        if member.bot:
             return
 
         # IDs de los roles (ajústalo según tu configuración)
@@ -367,6 +382,61 @@ async def set_data(
 ):
     insertRow(staff_channel.id, role_protect.id)
     await interaction.response.send_message("✅ Datos guardados correctamente.")
+
+
+@client.slash_command(name="list-users", description="")
+async def list_users(interaction: discord.Interaction):
+    logs = Logs()
+    users = logs.listUsers()
+
+    list = []
+
+    for user, alerts in users:
+        list.append((user, len(alerts)))
+
+    embed = discord.Embed(
+        title="Usuarios con alertas",
+        description="\n".join(
+            [
+                f"<@{user}>: {alerts} alertas"
+                for user, alerts in sorted(list, key=lambda x: x[1], reverse=True)
+            ]
+        ),
+        color=discord.Color.blue(),
+    )
+
+    await interaction.response.send_message(embed=embed)
+
+
+@client.slash_command(name="check-user", description="")
+async def check(interaction: discord.Interaction, member: discord.Member):
+    logs = Logs()
+    users = logs.listUsers()
+
+    for user in users:
+        if user[0] == str(member.id):
+            user_alerts = user[1]
+            break
+    else:
+        await interaction.response.send_message(
+            f"No hay alertas para {member.display_name}"
+        )
+        return
+
+    alert_list = "\n".join(
+        [
+            f"{alert['alert']} | :mailbox_with_mail: [Ir al mensaje]({alert['url']})"
+            for alert in user_alerts
+        ]
+    )
+
+    embed = discord.Embed(
+        title=f"Alertas de {member.display_name}",
+        description=alert_list or "No hay alertas",
+        color=discord.Color.blue(),
+    )
+
+    await interaction.response.send_message(embed=embed)
 
 
 def main():

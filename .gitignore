@@ -1,3 +1,4 @@
 .env
 settings.db
 __pycache__
+logs.json
