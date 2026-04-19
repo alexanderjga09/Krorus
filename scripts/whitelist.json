@@ -1,9 +1,9 @@
-{
-  "domains": [
+[
     "tenor.com",
     "giphy.com",
     "media.giphy.com",
     "i.giphy.com",
-    "media.tenor.com"
-  ]
-}
+    "media.tenor.com",
+    "github.com",
+    "discordapp.com"
+]

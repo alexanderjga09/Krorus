@@ -1,6 +1,7 @@
 import io
 import json as js
 import os
+import re
 
 import aiohttp
 import discord
@@ -87,6 +88,46 @@ class Krorus(commands.Bot):
 
         if not message.guild:  # Si el mensaje no es de un servidor, no hacemos nada
             return
+
+        if message.reference:
+            try:
+                ref_message = await message.channel.fetch_message(
+                    message.reference.message_id
+                )
+
+                if ref_message.author == self.user:
+                    return
+
+                if any(map(lambda r: r.id == BD[1], ref_message.author.roles)):
+                    msg = Message(message.content)
+
+                    misconduct = await msg.Misconduct(GROQ_CLIENT)
+                    if misconduct:
+                        await self._send_alert(
+                            message,
+                            "❗ Mensaje inapropiado",
+                            f"Dicho a: {ref_message.author.mention}\n**Contenido:**\n```{message.content}```",
+                        )
+                    return
+
+            except discord.NotFound:
+                return
+
+        if ids := re.findall(r"<@!?(\d+)>", message.content):
+            members = [discord.utils.get(message.guild.members, id=int(m)) for m in ids]
+
+            for member in members:
+                if any(map(lambda r: r.id == BD[1], member.roles)):
+                    msg = Message(message.content)
+
+                    misconduct = await msg.Misconduct(GROQ_CLIENT)
+                    if misconduct:
+                        await self._send_alert(
+                            message,
+                            "❗ Mensaje inapropiado",
+                            f"Protegidos mencionados: {', '.join(map(lambda m: m.mention if any(map(lambda r: r.id == BD[1], m.roles)) else '', members))}\n**Contenido:**\n```{message.content}```",
+                        )
+                    return
 
         member = message.author
         if not isinstance(member, discord.Member):
@@ -297,6 +338,20 @@ async def AAD(interaction: discord.Interaction, domain: str):
 
     data.append(domain)
     with open("scripts/alert_domains.json", "w") as f:
+        js.dump(data, f, indent=4)
+
+    await interaction.response.send_message(
+        f"Dominio **{domain}** agregado a la lista de alertas"
+    )
+
+
+@client.slash_command(name="append-whitelist", description="placeholder")
+async def AWL(interaction: discord.Interaction, domain: str):
+    with open("scripts/whitelist.json", "r") as f:
+        data = js.load(f)["domains"]
+
+    data.append(domain)
+    with open("scripts/whitelist.json", "w") as f:
         js.dump(data, f, indent=4)
 
     await interaction.response.send_message(

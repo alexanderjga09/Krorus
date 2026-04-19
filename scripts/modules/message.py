@@ -99,18 +99,19 @@ class Message:
             return False, domain, url
 
     async def _scan_url_vt(self, session, api_key):
-        """Escanea la URL almacenada en self.scanned_url con VirusTotal, respetando límite de 4/min."""
         if not self.scanned_url:
             return False
 
         async with vt_semaphore:
+            # Preparar ID de la URL (base64 sin padding)
             url_id = (
                 base64.urlsafe_b64encode(self.scanned_url.encode()).decode().strip("=")
             )
-            vt_api_url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
             headers = {"x-apikey": api_key}
+            vt_api_url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
 
             try:
+                # 1. Intentar obtener informe existente
                 async with session.get(vt_api_url, headers=headers) as response:
                     if response.status == 200:
                         data = await response.json()
@@ -119,23 +120,51 @@ class Message:
                             .get("attributes", {})
                             .get("last_analysis_stats", {})
                         )
-                        malicious_count = stats.get("malicious", 0)
-                        if malicious_count > 0:
-                            print(
-                                f"[ALERTA VT] URL MALICIOSA: {self.scanned_url} (Detectada por {malicious_count} motores)"
-                            )
-                            return True
-                        else:
-                            print(f"[INFO VT] URL segura: {self.scanned_url}")
-                            return False
-                    elif response.status == 429:
+                        malicious = stats.get("malicious", 0)
+                        return malicious > 0
+                    elif response.status == 404:
+                        # 2. La URL no está en VT → enviar para análisis
                         print(
-                            "[ERROR VT] Límite de API alcanzado (4/min o 500/día). Esperando 60s..."
+                            f"[INFO VT] URL no encontrada, enviando a análisis: {self.scanned_url}"
                         )
+                        submit_data = {"url": self.scanned_url}
+                        async with session.post(
+                            "https://www.virustotal.com/api/v3/urls",
+                            headers=headers,
+                            data=submit_data,
+                        ) as post_resp:
+                            if post_resp.status == 200:
+                                # Esperar un poco para que VT procese (puedes aumentar a 10-15s)
+                                await asyncio.sleep(5)
+                                # Reintentar obtener el informe
+                                async with session.get(
+                                    vt_api_url, headers=headers
+                                ) as retry_resp:
+                                    if retry_resp.status == 200:
+                                        data = await retry_resp.json()
+                                        stats = (
+                                            data.get("data", {})
+                                            .get("attributes", {})
+                                            .get("last_analysis_stats", {})
+                                        )
+                                        malicious = stats.get("malicious", 0)
+                                        return malicious > 0
+                                    else:
+                                        print(
+                                            f"[ERROR VT] No se pudo obtener el análisis después del envío: {retry_resp.status}"
+                                        )
+                                        return False
+                            else:
+                                print(
+                                    f"[ERROR VT] Fallo al enviar URL: {post_resp.status}"
+                                )
+                                return False
+                    elif response.status == 429:
+                        print("[ERROR VT] Límite alcanzado, esperando 60s...")
                         await asyncio.sleep(60)
                         return None
                     else:
-                        print(f"[ERROR VT] Error en la API: {response.status}")
+                        print(f"[ERROR VT] Error inesperado: {response.status}")
                         return False
             except aiohttp.ClientError as e:
                 print(f"[ERROR VT] Error de red: {e}")
