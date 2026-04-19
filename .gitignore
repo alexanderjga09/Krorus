@@ -2,3 +2,4 @@
 settings.db
 __pycache__
 logs.json
+.venv
