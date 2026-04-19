@@ -2,6 +2,7 @@ import io
 import json as js
 import os
 import re
+import sys
 
 import aiohttp
 import discord
@@ -9,24 +10,15 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from groq import AsyncGroq, Groq
 
-from .modules.database import createDB, createTable, insertRow, readRow
+from .modules.database import createDB, createTable, insertRow, readRow, try_read_row
 from .modules.fernet import decrypt_message, encrypt_message
 from .modules.logs import Logs
 from .modules.message import Message
 
 load_dotenv()
 
-GROQ_CLIENT_AUDIO = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
-GROQ_CLIENT = Groq(api_key=os.environ.get("GROQ_API_KEY"))
-
-
-def try_read_row():
-    try:
-        return readRow()[0]
-    except Exception:
-        createDB()
-        createTable()
-        return None
+GROQ_CLIENT = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+BD = try_read_row()
 
 
 class Krorus(commands.Bot):
@@ -40,9 +32,6 @@ class Krorus(commands.Bot):
     async def _send_alert(
         self, message, title, details
     ):  # Este metodo es la estructura para enviar alertas al canal de staff
-        BD = try_read_row()
-        if not BD:
-            return
 
         staff_channel_id = BD[0]
         staff_channel = self.get_channel(staff_channel_id)
@@ -78,10 +67,6 @@ class Krorus(commands.Bot):
         print("Alerta enviada")
 
     async def on_message(self, message):
-        BD = try_read_row()
-        if not BD:
-            return
-
         if (
             message.author == self.user
         ):  # Si el mensaje es del bot mismo, no hacemos nada
@@ -104,12 +89,15 @@ class Krorus(commands.Bot):
 
                     misconduct = await msg.Misconduct(GROQ_CLIENT)
                     if misconduct:
-                        logs = Logs()
-                        logs.addAlert(
-                            message.author.id,
-                            "Mensaje inapropiado (dicho a un protegido)",
-                            message.jump_url,
-                        )
+                        if not discord.utils.get(
+                            message.author.roles, id=BD[1]
+                        ):  # Si el usuario no tiene el rol necesario, no hacemos nada
+                            logs = Logs()
+                            logs.addAlert(
+                                message.author.id,
+                                "Mensaje inapropiado (protegido mencionados)",
+                                message.jump_url,
+                            )
 
                         await self._send_alert(
                             message,
@@ -130,12 +118,15 @@ class Krorus(commands.Bot):
 
                     misconduct = await msg.Misconduct(GROQ_CLIENT)
                     if misconduct:
-                        logs = Logs()
-                        logs.addAlert(
-                            message.author.id,
-                            "Mensaje inapropiado (protegido mencionados)",
-                            message.jump_url,
-                        )
+                        if not discord.utils.get(
+                            member.roles, id=BD[1]
+                        ):  # Si el usuario no tiene el rol necesario, no hacemos nada
+                            logs = Logs()
+                            logs.addAlert(
+                                message.author.id,
+                                "Mensaje inapropiado (protegido mencionados)",
+                                message.jump_url,
+                            )
 
                         await self._send_alert(
                             message,
@@ -193,7 +184,7 @@ class Krorus(commands.Bot):
                     )  # Asigna un nombre, es requerido
 
                     # Realiza la transcripción de forma asíncrona
-                    transcription = await GROQ_CLIENT_AUDIO.audio.transcriptions.create(
+                    transcription = await GROQ_CLIENT.audio.transcriptions.create(
                         file=audio_file,  # El archivo en memoria
                         model="whisper-large-v3-turbo",  # Modelo de Groq para transcribir
                         response_format="text",  # Formato de la respuesta (texto plano)
@@ -244,10 +235,6 @@ class Krorus(commands.Bot):
         before: discord.VoiceState,
         after: discord.VoiceState,
     ):
-        BD = try_read_row()
-        if not BD:
-            return
-
         if member.bot:
             return
 
@@ -309,10 +296,6 @@ async def whisper(
 ):
     if destinatario is None:
         destinatario = ctx.author
-
-    BD = try_read_row()
-    if not BD:
-        return
 
     encrypted_msg = encrypt_message(mensaje, destinatario.id)
     view = DecryptButton(encrypted_msg, destinatario.id)
@@ -382,6 +365,7 @@ async def set_data(
 ):
     insertRow(staff_channel.id, role_protect.id)
     await interaction.response.send_message("✅ Datos guardados correctamente.")
+    os.execv(sys.executable, ["python"] + sys.argv)
 
 
 @client.slash_command(name="list-users", description="")

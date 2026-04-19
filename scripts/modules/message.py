@@ -174,31 +174,33 @@ class Message:
         if not self.content or len(self.content.strip()) == 0:
             return False
 
-        def _call_groq():
+        async def _call_groq():
             try:
-                chat_completion = groq_client.chat.completions.create(
-                    messages=[
-                        {
-                            "role": "user",
-                            "content": (
-                                "Does this text contain bad words and their abbreviations, is it sexual in nature, "
-                                "or is it about doxxing (obtaining information about someone's home address)? "
-                                "If so, respond only 'True'. If not, respond only 'False'.\n\n"
-                                f"Text: {self.content}"
-                            ),
-                        }
-                    ],
-                    model="llama-3.3-70b-versatile",
-                    timeout=5.0,  # tiempo máximo de espera
+                chat_completion = await asyncio.wait_for(
+                    groq_client.chat.completions.create(
+                        messages=[
+                            {
+                                "role": "user",
+                                "content": (
+                                    "Does this text contain bad words and their abbreviations, is it sexual in nature, "
+                                    "or is it about doxxing (obtaining information about someone's home address)? "
+                                    "If so, respond only 'True'. If not, respond only 'False'.\n\n"
+                                    f"Text: {self.content}"
+                                ),
+                            }
+                        ],
+                        model="llama-3.3-70b-versatile",
+                        temperature=0.0,
+                    ),
+                    timeout=10.0,  # 10 segundos máximo de espera
                 )
                 response = chat_completion.choices[0].message.content.strip().lower()
-                return response == "true" or response.startswith("true")
+                return response.startswith("true")
+            except asyncio.TimeoutError:
+                print(f"[Groq] Timeout al analizar mensaje: {self.content[:50]}...")
+                return False
             except Exception as e:
-                print(f"Error en Groq API: {e}")
+                print(f"[Groq] Error en la API: {e}")
                 return False
 
-            # Ejecutar en un hilo separado para no bloquear asyncio
-
-        loop = asyncio.get_running_loop()
-        result = await loop.run_in_executor(None, _call_groq)
-        return result
+        return await _call_groq()

@@ -22,21 +22,31 @@ def createTable():
 
 
 def insertRow(staff_channel, role_id):
-    conn = sql.connect("settings.db")
-    cursor = conn.cursor()
-    cursor.execute(
-        "INSERT INTO settings (staff_channel, role_id) VALUES (?, ?)",
-        (staff_channel, role_id),
-    )
-    conn.commit()
-    conn.close()
+    try:
+        with sql.connect("settings.db") as conn:
+            cursor = conn.cursor()
+            cursor.execute(
+                "CREATE TABLE IF NOT EXISTS settings (staff_channel integer, role_id integer)"
+            )
+            cursor.execute(
+                "INSERT INTO settings VALUES (?, ?)", (staff_channel, role_id)
+            )
+            conn.commit()
+    except sql.OperationalError as e:
+        print(f"Error en la base de datos: {e}")
 
 
 def readRow():
-    conn = sql.connect("settings.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM settings")
-    row = cursor.fetchall()
-    conn.commit()
-    conn.close()
-    return row
+    with sql.connect("settings.db") as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM settings")
+        return cursor.fetchall()
+
+
+def try_read_row():
+    try:
+        return readRow()[0]
+    except Exception:
+        createDB()
+        createTable()
+        return None
