@@ -1,8 +1,6 @@
 import io
-import json as js
 import os
 import re
-import sys
 
 import aiohttp
 import discord
@@ -10,8 +8,13 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from groq import AsyncGroq
 
-from .modules.database import insertRow, try_read_row
-from .modules.fernet import decrypt_message, encrypt_message
+from .cogs.append_alertdomain import AppendAlertDomain
+from .cogs.append_whitelist import AppendWhitelistDomain
+from .cogs.check_user import CheckUser
+from .cogs.list_users import ListUsers
+from .cogs.set_data import SetData
+from .cogs.whisper import Whisper
+from .modules.database import try_read_row
 from .modules.logs import Logs
 from .modules.message import Message
 
@@ -254,172 +257,12 @@ class Krorus(commands.Bot):
 client = Krorus()
 
 
-class DecryptButton(discord.ui.View):
-    def __init__(self, encrypted_message: str, recipient_id: int):
-        super().__init__(timeout=180)
-        self.encrypted_message = encrypted_message
-        self.recipient_id = recipient_id
-
-    @discord.ui.button(label="🔓 Descifrar Mensaje", style=discord.ButtonStyle.primary)
-    async def decrypt_callback(
-        self, button: discord.ui.Button, interaction: discord.Interaction
-    ) -> None:
-        if interaction.user.id != self.recipient_id:
-            await interaction.response.send_message(
-                "❌ No tienes permiso para descifrar este mensaje.", ephemeral=True
-            )
-            return
-
-        try:
-            decrypted_text: str = decrypt_message(self.encrypted_message, self.recipient_id)
-            await interaction.response.send_message(
-                f"**Mensaje secreto:**\n{decrypted_text}", ephemeral=True
-            )
-            button.disabled = True
-            await interaction.edit_original_response(view=self)
-        except Exception:
-            await interaction.response.send_message(
-                "❌ Error al descifrar el mensaje. Puede que la clave sea incorrecta o el mensaje esté dañado.",
-                ephemeral=True,
-            )
-
-
-@client.slash_command(
-    name="whisper", description="Envía un mensaje secreto a un usuario."
-)
-async def whisper(
-    ctx: discord.ApplicationContext,
-    destinatario: discord.Option(discord.SlashCommandOptionType.user, "El usuario que podrá leer el mensaje."),  # type: ignore
-    mensaje: discord.Option(str, "El mensaje secreto que quieres enviar."),  # type: ignore
-) -> None:
-    if destinatario is None:
-        destinatario = ctx.author
-
-    encrypted_msg: str = encrypt_message(mensaje, destinatario.id)
-    view = DecryptButton(encrypted_msg, destinatario.id)
-
-    ROLE_PROTEGIDO_ID = BD[1]
-
-    if ROLE_PROTEGIDO_ID in map(
-        lambda role: role.id, ctx.author.roles
-    ) or ROLE_PROTEGIDO_ID in map(lambda role: role.id, destinatario.roles):
-        await client._send_alert(
-            ctx,
-            "Mensaje secreto",
-            f"**Destinatario:** {destinatario.mention}\n```{mensaje}```",
-        )
-
-    embed = discord.Embed(
-        title="🔒 ¡Tienes un mensaje secreto!",
-        description=f"**Remitente:** {ctx.author.mention}\nHaz clic en el botón para leerlo. Este enlace expirará en 3 minutos.",
-        color=discord.Color.blue(),
-    )
-
-    try:
-        await destinatario.send(embed=embed, view=view)
-        await ctx.respond(
-            f"✅ Mensaje secreto enviado a {destinatario.mention}.", ephemeral=True
-        )
-    except discord.Forbidden:
-        await ctx.respond(
-            f"❌ No puedo enviar mensajes directos a {destinatario.mention}. Asegúrate de que sus DMs estén abiertos.",
-            ephemeral=True,
-        )
-
-
-@client.slash_command(name="append-alertdomain", description="placeholder")
-async def AAD(interaction: discord.Interaction, domain: str) -> None:
-    with open("scripts/alert_domains.json", "r") as f:
-        data = js.load(f)
-
-    data.append(domain)
-    with open("scripts/alert_domains.json", "w") as f:
-        js.dump(data, f, indent=4)
-
-    await interaction.response.send_message(
-        f"Dominio **{domain}** agregado a la lista de alertas"
-    )
-
-
-@client.slash_command(name="append-whitelist", description="placeholder")
-async def AWL(interaction: discord.Interaction, domain: str) -> None:
-    with open("scripts/whitelist.json", "r") as f:
-        data = js.load(f)["domains"]
-
-    data.append(domain)
-    with open("scripts/whitelist.json", "w") as f:
-        js.dump(data, f, indent=4)
-
-    await interaction.response.send_message(
-        f"Dominio **{domain}** agregado a la lista de alertas"
-    )
-
-
-@client.slash_command(name="set-data", description="")
-async def set_data(
-    interaction: discord.Interaction,
-    staff_channel: discord.TextChannel,
-    role_protect: discord.Role,
-):
-    insertRow(staff_channel.id, role_protect.id)
-    await interaction.response.send_message("✅ Datos guardados correctamente.")
-    os.execv(sys.executable, ["python"] + sys.argv)
-
-
-@client.slash_command(name="list-users", description="")
-async def list_users(interaction: discord.Interaction) -> None:
-    logs = Logs()
-    users = logs.listUsers()
-
-    list = []
-
-    for user, alerts in users:
-        list.append((user, len(alerts)))
-
-    embed = discord.Embed(
-        title="Usuarios con alertas",
-        description="\n".join(
-            [
-                f"<@{user}>: {alerts} alertas"
-                for user, alerts in sorted(list, key=lambda x: x[1], reverse=True)
-            ]
-        ),
-        color=discord.Color.blue(),
-    )
-
-    await interaction.response.send_message(embed=embed)
-
-
-@client.slash_command(name="check-user", description="")
-async def check(interaction: discord.Interaction, member: discord.Member) -> None:
-    logs = Logs()
-    users = logs.listUsers()
-
-    for user in users:
-        if user[0] == str(member.id):
-            user_alerts = user[1]
-            break
-    else:
-        await interaction.response.send_message(
-            f"No hay alertas para {member.display_name}"
-        )
-        return
-
-    alert_list: str = "\n".join(
-        [
-            f"{alert['alert']} | :mailbox_with_mail: [Ir al mensaje]({alert['url']})"
-            for alert in user_alerts
-        ]
-    )
-
-    embed = discord.Embed(
-        title=f"Alertas de {member.display_name}",
-        description=alert_list or "No hay alertas",
-        color=discord.Color.blue(),
-    )
-
-    await interaction.response.send_message(embed=embed)
-
-
 def main() -> None:
+    client.add_cog(Whisper(client, BD))
+    client.add_cog(AppendAlertDomain(client))
+    client.add_cog(AppendWhitelistDomain(client))
+    client.add_cog(SetData(client))
+    client.add_cog(ListUsers(client))
+    client.add_cog(CheckUser(client))
+
     client.run(os.getenv("TOKEN"))

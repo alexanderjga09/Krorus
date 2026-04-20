@@ -13,4 +13,5 @@
   "reportOperatorIssue": "none",
   "reportOptionalOperand": "none",
   "reportAttributeAccessIssue": "none",
+  "reportInvalidTypeForm": "none",
 }
