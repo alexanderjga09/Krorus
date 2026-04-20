@@ -1,5 +1,6 @@
 import os
 import re
+from pathlib import Path
 
 import aiohttp
 import discord
@@ -8,6 +9,7 @@ from dotenv import load_dotenv
 from groq import AsyncGroq
 
 from .cogs.append_alertdomain import AppendAlertDomain
+from .cogs.append_ignoreword import AppendIgnoreWord
 from .cogs.append_whitelist import AppendWhitelistDomain
 from .cogs.check_user import CheckUser
 from .cogs.list_users import ListUsers
@@ -22,6 +24,7 @@ load_dotenv()
 
 GROQ_CLIENT = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 BD = try_read_row()
+PATH_IGNORE_WORDS = Path(__file__).parent / "data" / "ignore_words.json"
 
 
 class Krorus(commands.Bot):
@@ -76,6 +79,10 @@ class Krorus(commands.Bot):
             return
 
         if not message.guild:  # Si el mensaje no es de un servidor, no hacemos nada
+            return
+
+        ignore_cog = self.get_cog("AppendIgnoreWord")
+        if ignore_cog and ignore_cog.should_ignore(message.content):
             return
 
         if message.reference:
@@ -237,5 +244,6 @@ def main() -> None:
     client.add_cog(SetData(client))
     client.add_cog(ListUsers(client))
     client.add_cog(CheckUser(client))
+    client.add_cog(AppendIgnoreWord(client, PATH_IGNORE_WORDS))
 
     client.run(os.getenv("TOKEN"))
