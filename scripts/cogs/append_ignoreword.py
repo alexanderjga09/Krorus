@@ -37,14 +37,23 @@ class AppendIgnoreWord(commands.Cog):
         description="Append a word to the ignoreword list",
     )
     @default_permissions(administrator=True)
-    async def append_ignoreword(self, ctx, word: str):
+    async def append_ignoreword(self, ctx, words: str):
+        new_words = [w.strip() for w in words.split(",") if w.strip()]
         async with self.lock:
-            self.ignore_words.append(word)
+            self.ignore_words.extend(new_words)
             await self._write_json(self.ignore_words)
             self._rebuild_matchers()
-        await ctx.respond(
-            f"La palabra **{word}** ha sido añadida a la lista de ignorados."
-        )
+        await ctx.respond(f"Se añadieron {len(new_words)} palabras a la lista.")
+
+    @commands.slash_command(
+        name="reload-ignorewords", description="Reload the ignoreword list"
+    )
+    @default_permissions(administrator=True)
+    async def reload_ignorewords(self, ctx):
+        async with self.lock:
+            self.ignore_words = await self._read_json()
+            self._rebuild_matchers()
+        await ctx.respond("Lista de palabras ignoradas recargada.", ephemeral=True)
 
     async def _read_json(self) -> list:
         try:
