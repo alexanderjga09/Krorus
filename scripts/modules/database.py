@@ -3,7 +3,7 @@ import sqlite3 as sql
 
 def createDB():
     try:
-        conn = sql.connect("settings.db")
+        conn = sql.connect("data/settings.db")
         conn.commit()
         conn.close()
     except sql.OperationalError:
@@ -12,7 +12,7 @@ def createDB():
 
 def createTable():
     try:
-        conn = sql.connect("settings.db")
+        conn = sql.connect("data/settings.db")
         cursor = conn.cursor()
         cursor.execute("CREATE TABLE settings (staff_channel integer,role_id integer)")
         conn.commit()
@@ -23,7 +23,7 @@ def createTable():
 
 def insertRow(staff_channel, role_id):
     try:
-        with sql.connect("settings.db") as conn:
+        with sql.connect("data/settings.db") as conn:
             cursor = conn.cursor()
             cursor.execute(
                 "CREATE TABLE IF NOT EXISTS settings (staff_channel integer, role_id integer)"
@@ -37,7 +37,7 @@ def insertRow(staff_channel, role_id):
 
 
 def readRow():
-    with sql.connect("settings.db") as conn:
+    with sql.connect("data/settings.db") as conn:
         cursor = conn.cursor()
         cursor.execute("SELECT * FROM settings")
         return cursor.fetchall()

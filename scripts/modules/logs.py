@@ -6,14 +6,14 @@ class Logs:
         pass
 
     def createLog(self):
-        with open("logs.json", "w") as f:
+        with open("data/logs.json", "w") as f:
             init = {"users": {}}
 
             js.dump(init, f)
 
     def addAlert(self, id, alert, url):
         try:
-            with open("logs.json", "r+") as f:
+            with open("data/logs.json", "r+") as f:
                 data = js.load(f)
                 if str(id) not in data["users"]:
                     data["users"][str(id)] = []
@@ -28,7 +28,7 @@ class Logs:
 
     def listUsers(self):
         try:
-            with open("logs.json", "r") as f:
+            with open("data/logs.json", "r") as f:
                 data = js.load(f)
 
                 users = []

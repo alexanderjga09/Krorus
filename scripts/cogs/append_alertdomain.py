@@ -12,7 +12,9 @@ class AppendAlertDomain(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.lock = asyncio.Lock()
-        self.json_path = Path(__file__).parent.parent / "alert_domains.json"
+        self.json_path = (
+            Path(__file__).parent.parent.parent / "data" / "alert_domains.json"
+        )
 
     @commands.slash_command(
         name="append-alertdomain",

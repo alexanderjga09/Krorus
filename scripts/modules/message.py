@@ -16,8 +16,8 @@ class Message:
         self.scanned_url = None
 
     def _get_json_path(self, filename):
-        base_dir = Path(__file__).parent.parent
-        return base_dir / filename
+        base_dir = Path(__file__).parent.parent.parent
+        return base_dir / "data" / filename
 
     def _load_json_list(self, filename):
         path = self._get_json_path(filename)
@@ -26,8 +26,6 @@ class Message:
                 data = js.load(f)
                 if isinstance(data, list):
                     return data
-                elif isinstance(data, dict) and "domains" in data:
-                    return data["domains"]
                 else:
                     print(f"Formato JSON inesperado en {path}: {type(data)}")
                     return []

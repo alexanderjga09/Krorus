@@ -12,7 +12,7 @@ class AppendWhitelistDomain(commands.Cog):
     def __init__(self, bot):
         self.bot = bot
         self.lock = asyncio.Lock()
-        self.json_path = Path(__file__).parent.parent / "whitelist.json"
+        self.json_path = Path(__file__).parent.parent.parent / "data" / "whitelist.json"
 
     @commands.slash_command(
         name="append-whitelist",
