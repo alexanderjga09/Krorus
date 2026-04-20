@@ -24,7 +24,7 @@ class ListUsers(commands.Cog):
             title="Usuarios con alertas",
             description="\n".join(
                 [
-                    f"<@{user}>: {alerts} alertas"
+                    f"<@{user}> ({alerts} alertas)"
                     for user, alerts in sorted(list, key=lambda x: x[1], reverse=True)
                 ]
             ),

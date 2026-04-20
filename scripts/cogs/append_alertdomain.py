@@ -21,7 +21,7 @@ class AppendAlertDomain(commands.Cog):
     @default_permissions(administrator=True)
     async def add_alert_domain(
         self,
-        ctx: discord.ApplicationContext,  # ✅ Cambiado a ApplicationContext
+        ctx: discord.ApplicationContext,
         domain: discord.Option(str, "Dominio a agregar (ej: example.com)"),
     ) -> None:
         domain = domain.strip().lower()

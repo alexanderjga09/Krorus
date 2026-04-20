@@ -21,7 +21,7 @@ class AppendWhitelistDomain(commands.Cog):
     @default_permissions(administrator=True)
     async def add_whitelist_domain(
         self,
-        ctx: discord.ApplicationContext,  # ✅ Cambiado a ApplicationContext
+        ctx: discord.ApplicationContext,
         domain: discord.Option(str, "Dominio a agregar (ej: example.com)"),
     ) -> None:
         # Normalizar y validar

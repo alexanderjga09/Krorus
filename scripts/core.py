@@ -1,4 +1,3 @@
-import io
 import os
 import re
 
@@ -14,6 +13,7 @@ from .cogs.check_user import CheckUser
 from .cogs.list_users import ListUsers
 from .cogs.set_data import SetData
 from .cogs.whisper import Whisper
+from .modules.audio import transcribe_audio
 from .modules.database import try_read_row
 from .modules.logs import Logs
 from .modules.message import Message
@@ -88,6 +88,12 @@ class Krorus(commands.Bot):
                     return
 
                 if any(map(lambda r: r.id == BD[1], ref_message.author.roles)):
+                    if message.attachments:
+                        await transcribe_audio(
+                            self, message, GROQ_CLIENT, ref_message.author
+                        )
+                        return
+
                     msg = Message(message.content)
 
                     misconduct = await msg.Misconduct(GROQ_CLIENT)
@@ -113,7 +119,9 @@ class Krorus(commands.Bot):
                 return
 
         if ids := re.findall(r"<@!?(\d+)>", message.content):
-            members = [discord.utils.get(message.guild.members, id=int(m)) for m in ids]
+            members = [
+                discord.utils.get(message.guild.members, id=int(m)) for m in ids
+            ]  # Se obtiene los miembros mencionados
 
             for member in members:
                 if any(map(lambda r: r.id == BD[1], member.roles)):
@@ -170,43 +178,8 @@ class Krorus(commands.Bot):
             )
 
         if message.attachments:
-            audio_attachment = message.attachments[0]
-            # Verifica que sea un formato de audio soportado (mp3, wav, ogg, etc.)
-            if any(
-                audio_attachment.filename.lower().endswith(fmt)
-                for fmt in [".mp3", ".wav", ".ogg", ".m4a", ".flac"]
-            ):
-                # Lee el archivo de audio de forma asíncrona
-                audio_bytes = await audio_attachment.read()
-
-                try:
-                    # Prepara el archivo en memoria para enviarlo a Groq
-                    audio_file = io.BytesIO(audio_bytes)
-                    audio_file.name = (
-                        audio_attachment.filename
-                    )  # Asigna un nombre, es requerido
-
-                    # Realiza la transcripción de forma asíncrona
-                    transcription = await GROQ_CLIENT.audio.transcriptions.create(
-                        file=audio_file,  # El archivo en memoria
-                        model="whisper-large-v3-turbo",  # Modelo de Groq para transcribir
-                        response_format="text",  # Formato de la respuesta (texto plano)
-                    )
-
-                    # Envía la transcripción al canal de staff
-                    await self._send_alert(
-                        message,
-                        "📝 Transcripción de audio",
-                        f"**Contenido del mensaje de voz:**\n```{transcription}```",
-                    )
-
-                except Exception as e:
-                    print(f"Error al transcribir el audio: {e}")
-                    await self._send_alert(
-                        message,
-                        "❌ Error de transcripción",
-                        f"No se pudo transcribir el audio: {str(e)}",
-                    )
+            await transcribe_audio(self, message, GROQ_CLIENT)
+            return
 
     async def check_voice_channels(self, guild: discord.Guild, target_role_id: int):
         for vc in guild.voice_channels:

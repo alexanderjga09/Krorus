@@ -39,5 +39,6 @@ class CheckUser(commands.Cog):
             description=alert_list or "No hay alertas",
             color=discord.Color.blue(),
         )
+        embed.set_thumbnail(url=member.avatar.url)
 
         await ctx.respond(embed=embed)
