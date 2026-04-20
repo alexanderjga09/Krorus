@@ -73,9 +73,9 @@ class Message:
         gif_domains = self._load_json_list("whitelist.json")
         alert_domains = self._load_json_list("alert_domains.json")
 
-        # 1. Si es GIF -> omitir
+        # 1. Si esta en whitelist -> omitir
         if self._domain_matches(domain, gif_domains):
-            print(f"[INFO] Dominio {domain} en whitelist (GIFs) -> omitido")
+            print(f"[INFO] Dominio {domain} en whitelist -> omitido")
             return False, domain, url
 
         # 2. Si está en alert_domains -> alertar sin VT
@@ -175,17 +175,39 @@ class Message:
             return False
 
         async def _call_groq():
+            prompt_instrucciones = """
+                    Analiza el siguiente texto en español (o mezcla inglés/español).
+                    Responde **ÚNICAMENTE** 'True' o 'False' según las siguientes reglas estrictas:
+
+                    **Responde 'True' SOLO SI se cumple AL MENOS UNA de estas condiciones:**
+                    1. Contiene **insultos graves o blasfemias** dirigidos **explícitamente** a una persona o grupo (Ej: "Eres un hijo de puta", "Idiota de mierda", "Vete a la verga, [nombre]").
+                    2. Contiene **propuestas o descripciones sexuales explícitas** (Ej: "Quiero cogerte", "Manda nudes", descripciones gráficas de actos).
+                    3. Intenta obtener o revelar **información privada (Doxxing)** como dirección, teléfono, o datos personales reales (Ej: "¿Cuál es tu dirección?", "Vivo en la calle X").
+
+                    **Responde 'False' en estos casos (No son considerados 'Misconduct' grave para este filtro):**
+                    - Palabras soeces usadas como **muletillas o exclamaciones** sin un objetivo personal (Ej: "¡Joder, qué mal día!", "Mierda, perdí el tren").
+                    - Insultos leves genéricos no dirigidos a nadie (Ej: "Esto es una estupidez").
+                    - Texto que menciona las malas palabras pero no las usa para atacar (Ej: "Me dijo una mala palabra").
+
+                    **IMPORTANTE SOBRE EL LENGUAJE:**
+                    Debes detectar las palabras malsonantes incluso si están:
+                    - Escritas con caracteres especiales o números (Ej: "p*ta", "h1j0", "c0ñ0").
+                    - Separadas por puntos o espacios (Ej: "h i j o d e p u t a").
+
+                    Texto a analizar:
+                    "{texto_usuario}"
+
+                    Respuesta (solo 'True' o 'False'):
+                    """
+
             try:
                 chat_completion = await asyncio.wait_for(
                     groq_client.chat.completions.create(
                         messages=[
                             {
                                 "role": "user",
-                                "content": (
-                                    "Does this text contain bad words and their abbreviations, is it sexual in nature, "
-                                    "or is it about doxxing (obtaining information about someone's home address)? "
-                                    "If so, respond only 'True'. If not, respond only 'False'.\n\n"
-                                    f"Text: {self.content}"
+                                "content": prompt_instrucciones.format(
+                                    texto_usuario=self.content.strip()
                                 ),
                             }
                         ],

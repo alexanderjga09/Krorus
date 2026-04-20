@@ -28,8 +28,8 @@ async def transcribe_audio(
             model="whisper-large-v3-turbo",  # Modelo de Groq para transcribir
             response_format="text",  # Formato de la respuesta (texto plano)
         )
-
-        reference = f"**Mandado a:** {member.mention}" if member else ""
+        #
+        reference = f"Mandado a: {member.mention}" if member else ""
 
         # Envía la transcripción al canal de staff
         await self._send_alert(

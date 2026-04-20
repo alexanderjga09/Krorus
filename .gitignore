@@ -3,3 +3,5 @@ settings.db
 __pycache__
 logs.json
 .venv
+whitelist.json
+alert_domains.json
