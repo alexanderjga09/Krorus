@@ -30,10 +30,42 @@ PATH_IGNORE_WORDS = Path(__file__).parent.parent / "data" / "ignorewords.json"
 class Krorus(commands.Bot):
     def __init__(self):
         super().__init__(intents=discord.Intents.all())
+        self.allowed_guild_id = int(os.getenv("ALLOWED_GUILD_ID", "0"))
 
     async def on_ready(self):
         await self.change_presence(status=discord.Status.invisible)
         print(f"Logged in as {self.user}")
+
+        for guild in self.guilds:
+            if guild.id != self.allowed_guild_id:
+                print(
+                    f"🚫 Servidor no autorizado detectado al iniciar: {guild.name} ({guild.id}). Abandonando..."
+                )
+                try:
+                    # Intentar notificar al owner
+                    if guild.owner:
+                        await guild.owner.send(
+                            "Este bot es privado y solo funciona en un servidor autorizado. "
+                            "Si crees que esto es un error, contacta al desarrollador."
+                        )
+                finally:
+                    await guild.leave()
+
+    async def on_guild_join(self, guild):
+        if guild.id != self.ALLOWED_GUILD_ID:
+            print(
+                f"🚫 Bot añadido a servidor no autorizado: {guild.name} ({guild.id}). Abandonando..."
+            )
+            try:
+                if guild.owner:
+                    await guild.owner.send(
+                        "Este bot es privado y solo funciona en un servidor autorizado. "
+                        "Si crees que esto es un error, contacta al desarrollador."
+                    )
+            finally:
+                await guild.leave()
+        else:
+            print(f"✅ Bot añadido a servidor autorizado: {guild.name}")
 
     async def _send_alert(
         self, message, title, details
@@ -76,6 +108,10 @@ class Krorus(commands.Bot):
         if (
             message.author == self.user
         ):  # Si el mensaje es del bot mismo, no hacemos nada
+            return
+
+        if message.guild.id != self.allowed_guild_id:
+            await message.guild.leave()
             return
 
         if not message.guild:  # Si el mensaje no es de un servidor, no hacemos nada
