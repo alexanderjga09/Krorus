@@ -24,7 +24,7 @@ load_dotenv()
 
 GROQ_CLIENT = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 BD = try_read_row()
-PATH_IGNORE_WORDS = Path(__file__).parent / "data" / "ignore_words.json"
+PATH_IGNORE_WORDS = Path(__file__).parent.parent / "data" / "ignorewords.json"
 
 
 class Krorus(commands.Bot):

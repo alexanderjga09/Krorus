@@ -15,6 +15,19 @@ class AppendIgnoreWord(commands.Cog):
         self.ignore_words = []  # Lista original
         self.ignore_words_set = set()  # Para comparación exacta (O(1))
         self.ignore_pattern = None  # Expresión regular compilada
+        self._load_data()
+
+    def _load_data(self):
+        """Carga los datos del JSON y reconstruye los matchers."""
+        try:
+            content = self.json_path.read_text(encoding="utf-8")
+            data = json.loads(content)
+        except (FileNotFoundError, json.JSONDecodeError) as e:
+            print(f"⚠️ No se pudo cargar {self.json_path}: {e}")
+            data = []
+        self.ignore_words = data
+        self._rebuild_matchers()
+        print(f"✅ AppendIgnoreWord cargado con {len(self.ignore_words)} palabras.")
 
     async def cog_load(self):
         """Carga inicial de datos y compilación del patrón."""
