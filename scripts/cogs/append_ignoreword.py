@@ -36,11 +36,22 @@ class AppendIgnoreWord(commands.Cog):
         self._rebuild_matchers()
 
     def _rebuild_matchers(self):
+        """Construye el set de búsqueda rápida y el patrón regex restrictivo."""
         self.ignore_words_set = {w.lower() for w in self.ignore_words}
 
         if self.ignore_words:
-            escaped = [re.escape(w) for w in self.ignore_words]
-            pattern = rf"^\s*({'|'.join(escaped)})(?:\s|$)"
+            # Escapamos cada palabra comando
+            escaped_commands = [re.escape(w) for w in self.ignore_words]
+            commands_pattern = "|".join(escaped_commands)
+
+            # Patrón para argumentos válidos de Mudae:
+            # - números (opcionalmente con 'k')
+            # - flags como -s, -c (letras minúsculas)
+            # - menciones <@!?123456>
+            valid_arg = r"(?:\s+(?:-?[a-z]+|\d+k?|<@!?\d+>))*"
+
+            # El mensaje completo debe ser: inicio, comando, argumentos válidos, fin
+            pattern = rf"^\s*({commands_pattern}){valid_arg}\s*$"
             self.ignore_pattern = re.compile(pattern, re.IGNORECASE)
         else:
             self.ignore_pattern = None
