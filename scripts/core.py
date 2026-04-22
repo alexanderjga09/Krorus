@@ -105,12 +105,12 @@ class Krorus(commands.Bot):
         print("Alerta enviada")
 
     async def on_message(self, message):
-        if (
-            message.author == self.user
-        ):  # Si el mensaje es del bot mismo, no hacemos nada
+        if message.author.bot:  # Si el mensaje es de un bot, no hacemos nada
             return
 
-        if message.guild.id != self.allowed_guild_id:
+        if (
+            message.guild.id != self.allowed_guild_id
+        ):  # Si el mensaje no es de un servidor autorizado, salimos del servidor
             await message.guild.leave()
             return
 
@@ -118,7 +118,14 @@ class Krorus(commands.Bot):
             return
 
         ignore_cog = self.get_cog("AppendIgnoreWord")
-        if ignore_cog and ignore_cog.should_ignore(message.content):
+        if ignore_cog and ignore_cog.should_ignore(
+            message.content
+        ):  # Si el mensaje debe ser ignorado, no hacemos nada
+            return
+
+        if (
+            len(message.content) <= 2
+        ):  # Si el mensaje es demasiado corto, no hacemos nada
             return
 
         if message.reference:
@@ -223,6 +230,17 @@ class Krorus(commands.Bot):
         if message.attachments:
             await transcribe_audio(self, message, GROQ_CLIENT)
             return
+
+    async def on_message_edit(self, before: discord.Message, after: discord.Message):
+        if after.author.bot:
+            return
+
+        if before.content != after.content:
+            await self._send_alert(
+                after,
+                "📝 Mensaje editado",
+                f"**Antes:**\n```{before.content}```\n**Después:**\n```{after.content}```",
+            )
 
     async def check_voice_channels(self, guild: discord.Guild, target_role_id: int):
         for vc in guild.voice_channels:

@@ -70,6 +70,24 @@ class AppendIgnoreWord(commands.Cog):
         await ctx.respond(f"Se añadieron {len(new_words)} palabras a la lista.")
 
     @commands.slash_command(
+        name="remove-ignoreword",
+        description="Remove a word from the ignoreword list",
+    )
+    @default_permissions(administrator=True)
+    async def remove_ignoreword(self, ctx, word: str):
+        word = word.strip().lower()
+        async with self.lock:
+            if word in self.ignore_words:
+                self.ignore_words.remove(word)
+                await self._write_json(self.ignore_words)
+                self._rebuild_matchers()
+                await ctx.respond(f"✅ Palabra **{word}** eliminada de la lista.")
+            else:
+                await ctx.respond(
+                    f"❌ Palabra **{word}** no está en la lista.", ephemeral=True
+                )
+
+    @commands.slash_command(
         name="reload-ignorewords", description="Reload the ignoreword list"
     )
     @default_permissions(administrator=True)

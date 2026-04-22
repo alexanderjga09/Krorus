@@ -28,6 +28,10 @@ class BotSetupGUI:
 
         self.process_queue = queue.Queue()
         self.running_process = None
+        self.process_lock = threading.Lock()  # Para evitar condiciones de carrera
+
+        # Configurar protocolo de cierre
+        self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
 
         # Configurar grid principal
         self.root.columnconfigure(0, weight=1)  # panel izquierdo
@@ -111,28 +115,42 @@ class BotSetupGUI:
             row=5, column=1, sticky="ew", pady=5
         )
 
+        # Estado de ejecución
+        self.status_label = ttk.Label(
+            left_frame, text="● Inactivo", font=("TkDefaultFont", 10)
+        )
+        self.status_label.grid(row=6, column=0, columnspan=2, pady=(10, 5))
+        self.status_label.config(foreground="gray")
+
         # Botones
         btn_frame = ttk.Frame(left_frame)
-        btn_frame.grid(row=6, column=0, columnspan=2, pady=20)
-        ttk.Button(
+        btn_frame.grid(row=7, column=0, columnspan=2, pady=10)
+        self.setup_btn = ttk.Button(
             btn_frame,
             text="⚙️ Configurar e Instalar",
             command=self.start_setup,
             bootstyle=SUCCESS,
-        ).pack(side="left", padx=5)
-        ttk.Button(
+        )
+        self.setup_btn.pack(side="left", padx=5)
+        self.start_btn = ttk.Button(
             btn_frame, text="▶️ Ejecutar Bot", command=self.start_bot, bootstyle=INFO
-        ).pack(side="left", padx=5)
-        ttk.Button(
-            btn_frame, text="⏹️ Detener", command=self.stop_bot, bootstyle=DANGER
-        ).pack(side="left", padx=5)
+        )
+        self.start_btn.pack(side="left", padx=5)
+        self.stop_btn = ttk.Button(
+            btn_frame,
+            text="⏹️ Detener",
+            command=self.stop_bot,
+            bootstyle=DANGER,
+            state="disabled",
+        )
+        self.stop_btn.pack(side="left", padx=5)
 
         # Estado de visibilidad
         self.token_visible = False
         self.groq_visible = False
         self.vt_visible = False
 
-        left_frame.rowconfigure(7, weight=1)  # Espacio flexible
+        left_frame.rowconfigure(8, weight=1)  # Espacio flexible
 
     def create_right_panel(self):
         """Panel derecho: consola con ScrolledText de ttkbootstrap."""
@@ -241,7 +259,32 @@ class BotSetupGUI:
             return False
         return True
 
-    # --- Ejecución en segundo plano con corrección del NoneType ---
+    # --- Manejo de procesos ---
+    def kill_process_tree(self, pid):
+        """Mata el proceso y todos sus hijos de forma recursiva."""
+        if pid is None:
+            return
+        try:
+            if sys.platform == "win32":
+                subprocess.run(
+                    ["taskkill", "/F", "/T", "/PID", str(pid)],
+                    capture_output=True,
+                    check=False,
+                )
+            else:
+                # En sistemas Unix, usar pkill con el PGID
+                subprocess.run(["pkill", "-P", str(pid)], check=False)
+                os.kill(pid, 15)  # SIGTERM
+        except Exception as e:
+            self.log(f"Error al matar proceso: {e}", "error")
+
+    def is_process_running(self):
+        """Devuelve True si hay un proceso en ejecución."""
+        with self.process_lock:
+            return (
+                self.running_process is not None and self.running_process.poll() is None
+            )
+
     def run_command_in_thread(self, cmd, cwd=None, env=None, on_finish=None):
         def target():
             process_env = os.environ.copy()
@@ -249,26 +292,43 @@ class BotSetupGUI:
             if env:
                 process_env.update(env)
 
-            process = subprocess.Popen(
-                cmd,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                cwd=cwd,
-                env=process_env,
-                shell=True if sys.platform == "win32" else False,
-                bufsize=1,
-                universal_newlines=True,
-            )
-            self.running_process = process
+            kwargs = {
+                "stdout": subprocess.PIPE,
+                "stderr": subprocess.STDOUT,
+                "text": True,
+                "cwd": cwd,
+                "env": process_env,
+                "bufsize": 1,
+                "universal_newlines": True,
+            }
+
+            if sys.platform == "win32":
+                # Ocultar ventana de consola en Windows
+                startupinfo = subprocess.STARTUPINFO()
+                startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
+                startupinfo.wShowWindow = subprocess.SW_HIDE
+                kwargs["startupinfo"] = startupinfo
+                kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+                # Usar shell=False es más seguro, pero si se requiere shell por rutas con espacios
+                # se puede usar shell=True manteniendo los flags de ocultamiento.
+                kwargs["shell"] = False
+            else:
+                # En Unix, crear nueva sesión para poder matar el grupo de procesos
+                kwargs["preexec_fn"] = os.setsid
+
+            process = subprocess.Popen(cmd, **kwargs)
+            with self.process_lock:
+                self.running_process = process
+
             for line in iter(process.stdout.readline, ""):
                 self.process_queue.put(("log", line.strip()))
             process.stdout.close()
             return_code = process.wait()
-            self.running_process = None
+
+            with self.process_lock:
+                self.running_process = None
             self.process_queue.put(("finish", return_code))
 
-            # Corrección: almacenar on_finish en variable local antes del lambda
             if on_finish is not None:
                 cb = on_finish
                 self.root.after(0, lambda rc=return_code: cb(rc))
@@ -281,10 +341,33 @@ class BotSetupGUI:
                 msg_type, content = self.process_queue.get_nowait()
                 if msg_type == "log":
                     self.log(content)
+                elif msg_type == "finish":
+                    # El proceso terminó, actualizar UI
+                    self.root.after(0, self.update_ui_after_process)
         except queue.Empty:
             pass
         finally:
             self.root.after(100, self.poll_queue)
+
+    def update_ui_after_process(self):
+        """Actualiza la interfaz después de que termine el proceso."""
+        if not self.is_process_running():
+            self.status_label.config(text="● Inactivo", foreground="gray")
+            self.stop_btn.config(state="disabled")
+            self.start_btn.config(state="normal")
+            self.setup_btn.config(state="normal")
+
+    def on_closing(self):
+        """Maneja el cierre de la ventana."""
+        if self.is_process_running():
+            if messagebox.askokcancel(
+                "Salir",
+                "Hay un bot en ejecución. ¿Deseas detenerlo y salir?",
+            ):
+                self.stop_bot(wait=True)
+            else:
+                return
+        self.root.destroy()
 
     # --- Configuración ---
     def start_setup(self):
@@ -292,7 +375,7 @@ class BotSetupGUI:
             return
         self.clear_console()
         self.log("🚀 Iniciando configuración...", "info")
-        self.set_buttons_state("disabled")
+        self.set_buttons_state("disabled", except_stop=False)
 
         env_path = Path(self.project_path.get()) / ".env"
         env_content = "\n".join(
@@ -351,9 +434,49 @@ class BotSetupGUI:
     def after_deps_installed(self, return_code):
         if return_code != 0:
             self.log("❌ Fallo en la instalación de dependencias.", "error")
-        else:
-            self.log("✅ Dependencias instaladas.", "success")
-            self.log("🎉 ¡Configuración completada con éxito!", "success")
+            self.set_buttons_state("normal")
+            return
+
+        self.log("✅ Dependencias instaladas.", "success")
+
+        # Verificar importación de módulos críticos
+        venv_path = Path(self.project_path.get()) / ".venv"
+        python_exe = (
+            venv_path / ("Scripts" if sys.platform == "win32" else "bin") / "python.exe"
+        )
+        try:
+            subprocess.run(
+                [str(python_exe), "-c", "import aiohttp, discord, groq"],
+                check=True,
+                capture_output=True,
+                text=True,
+                cwd=self.project_path.get(),
+            )
+            self.log("✅ Módulos verificados correctamente.", "success")
+        except subprocess.CalledProcessError:
+            self.log("⚠️ Fallo al importar módulos. Reinstalando aiohttp...", "warning")
+            pip_exec = (
+                venv_path
+                / ("Scripts" if sys.platform == "win32" else "bin")
+                / "pip.exe"
+            )
+            subprocess.run(
+                [str(pip_exec), "uninstall", "aiohttp", "yarl", "multidict", "-y"],
+                check=False,
+            )
+            subprocess.run(
+                [
+                    str(pip_exec),
+                    "install",
+                    "aiohttp==3.13.5",
+                    "--force-reinstall",
+                    "--no-cache-dir",
+                ],
+                check=True,
+            )
+            self.log("✅ aiohttp reinstalado correctamente.", "success")
+
+        self.log("🎉 ¡Configuración completada con éxito!", "success")
         self.set_buttons_state("normal")
 
     # --- Ejecución del bot ---
@@ -361,6 +484,18 @@ class BotSetupGUI:
         if not self.project_path.get():
             messagebox.showerror("Error", "No se ha seleccionado carpeta del proyecto.")
             return
+
+        # Verificar si ya hay un proceso corriendo
+        if self.is_process_running():
+            response = messagebox.askyesno(
+                "Bot en ejecución",
+                "Ya hay un bot ejecutándose. ¿Deseas detenerlo y ejecutar uno nuevo?",
+            )
+            if response:
+                self.stop_bot(wait=True)
+            else:
+                return
+
         venv_path = Path(self.project_path.get()) / ".venv"
         if sys.platform == "win32":
             python_venv = venv_path / "Scripts" / "python.exe"
@@ -375,6 +510,7 @@ class BotSetupGUI:
 
         self.clear_console()
         self.log("🤖 Ejecutando bot...", "info")
+        self.status_label.config(text="● Ejecutando", foreground="green")
         self.set_buttons_state("disabled", except_stop=True)
 
         self.run_command_in_thread(
@@ -388,26 +524,47 @@ class BotSetupGUI:
             self.log("⚠️ El bot se detuvo con errores.", "error")
         else:
             self.log("✅ Bot finalizado correctamente.", "success")
-        self.set_buttons_state("normal")
+        self.update_ui_after_process()
 
-    def stop_bot(self):
-        if self.running_process and self.running_process.poll() is None:
-            self.running_process.terminate()
-            self.log("🛑 Bot detenido por el usuario.", "warning")
-        else:
+    def stop_bot(self, wait=False):
+        """Detiene el bot y todos sus procesos hijos.
+        Si wait=True, espera hasta que el proceso termine (para cierre de app)."""
+        if not self.is_process_running():
             self.log("No hay ningún bot en ejecución.", "info")
-        self.set_buttons_state("normal")
+            self.update_ui_after_process()
+            return
+
+        self.log("🛑 Deteniendo bot...", "warning")
+        with self.process_lock:
+            if self.running_process:
+                pid = self.running_process.pid
+                self.kill_process_tree(pid)
+                if wait:
+                    try:
+                        self.running_process.wait(timeout=3)
+                    except subprocess.TimeoutExpired:
+                        self.running_process.kill()
+                        self.running_process.wait()
+                self.running_process = None
+
+        self.log("✅ Bot detenido.", "success")
+        self.update_ui_after_process()
 
     def set_buttons_state(self, state, except_stop=False):
         """Habilita/deshabilita botones principales."""
-        for child in self.root.winfo_children():
-            if isinstance(child, ttk.Frame):
-                for widget in child.winfo_children():
-                    if isinstance(widget, ttk.Button):
-                        if except_stop and widget["text"] == "⏹️ Detener":
-                            widget.config(state="normal")
-                        else:
-                            widget.config(state=state)
+        if except_stop:
+            self.setup_btn.config(state="disabled")
+            self.start_btn.config(state="disabled")
+            self.stop_btn.config(state="normal")
+        else:
+            for btn in [self.setup_btn, self.start_btn, self.stop_btn]:
+                btn.config(state=state)
+            if self.is_process_running():
+                self.stop_btn.config(state="normal")
+                self.start_btn.config(state="disabled")
+                self.setup_btn.config(state="disabled")
+            else:
+                self.stop_btn.config(state="disabled")
 
 
 if __name__ == "__main__":
@@ -415,7 +572,7 @@ if __name__ == "__main__":
 
     # Fuente global
     style = ttk.Style()
-    default_font = ("Segoe UI", 10)  # Cambia aquí la fuente y tamaño
+    default_font = ("Segoe UI", 10)
     style.configure(".", font=default_font)
 
     app = BotSetupGUI(root)

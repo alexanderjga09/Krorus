@@ -43,6 +43,32 @@ class AppendAlertDomain(commands.Cog):
 
         await ctx.respond(f"✅ Dominio **{domain}** agregado a la lista de alertas.")
 
+    @commands.slash_command(name="remove_alert_domain")
+    @default_permissions(administrator=True)
+    async def remove_alert_domain(
+        self,
+        ctx: discord.ApplicationContext,
+        domain: discord.Option(str, "Dominio a remover (ej: example.com)"),
+    ) -> None:
+        domain = domain.strip().lower()
+        if not self._is_valid_domain(domain):
+            await ctx.respond(
+                f"❌ El dominio **{domain}** no es válido.", ephemeral=True
+            )
+            return
+
+        async with self.lock:
+            data = await self._read_json()
+            if domain not in data:
+                await ctx.respond(
+                    f"⚠️ El dominio **{domain}** no está en la lista.", ephemeral=True
+                )
+                return
+            data.remove(domain)
+            await self._write_json(data)
+
+        await ctx.respond(f"✅ Dominio **{domain}** removido de la lista de alertas.")
+
     def _is_valid_domain(self, domain: str) -> bool:
         pattern = r"^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$"
         return re.match(pattern, domain) is not None

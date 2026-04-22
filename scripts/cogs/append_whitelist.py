@@ -45,6 +45,25 @@ class AppendWhitelistDomain(commands.Cog):
 
         await ctx.respond(f"✅ Dominio **{domain}** agregado a la lista blanca.")
 
+    @commands.slash_command(
+        name="remove-whitelist-domain",
+        description="Remove a domain from the whitelist",
+    )
+    @default_permissions(administrator=True)
+    async def remove_whitelist_domain(self, ctx, domain: str):
+        domain = domain.strip().lower()
+        async with self.lock:
+            if domain in self.whitelist:
+                self.whitelist.remove(domain)
+                await self._write_json(self.whitelist)
+                await ctx.respond(
+                    f"✅ Dominio **{domain}** eliminado de la lista blanca."
+                )
+            else:
+                await ctx.respond(
+                    f"❌ Dominio **{domain}** no está en la lista.", ephemeral=True
+                )
+
     def _is_valid_domain(self, domain: str) -> bool:
         pattern = r"^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$"
         return re.match(pattern, domain) is not None

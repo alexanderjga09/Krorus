@@ -8,10 +8,7 @@ async def transcribe_audio(
 ):
     audio_attachment = message.attachments[0]
     # Verifica que sea un formato de audio soportado (mp3, wav, ogg, etc.)
-    if any(
-        audio_attachment.filename.lower().endswith(fmt)
-        for fmt in [".mp3", ".wav", ".ogg", ".m4a", ".flac"]
-    ):
+    if any(audio_attachment.filename.lower().endswith(fmt) for fmt in [".ogg"]):
         # Lee el archivo de audio de forma asíncrona
         audio_bytes = await audio_attachment.read()
     else:
