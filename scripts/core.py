@@ -91,14 +91,16 @@ class Krorus(commands.Bot):
         )
 
         try:
-            URL = message.jump_url
+            URL = (
+                f":mailbox_with_mail: [Ir directamente al mensaje]({message.jump_url})"
+            )
         except Exception as e:
             print(f"Error al obtener URL: {e}")
-            URL = None
+            URL = ""
 
         embed.add_field(
             name="Detalles",
-            value=f"{details}\n:mailbox_with_mail: [Ir directamente al mensaje]({URL})",
+            value=f"{details}\n{URL}",
             inline=False,
         )
 
@@ -272,7 +274,7 @@ class Krorus(commands.Bot):
                 await self._send_alert(
                     f"Se ha detectado una situación de supervisión en el canal **{vc.mention}**.",
                     "⚠️ Alerta de supervisión en canal de voz",
-                    f"Miembros con el rol: {', '.join([m.mention for m in members_with_role]) or 'Ninguno'}\nMiembros sin el rol: {', '.join([m.mention for m in members_without_role]) or 'Ninguno'}",
+                    f"Protegidos: {', '.join([m.mention for m in members_with_role]) or 'Ninguno'}\nMiembros: {', '.join([m.mention for m in members_without_role]) or 'Ninguno'}",
                 )
 
     # Evento para monitorear cambios en los canales de voz
