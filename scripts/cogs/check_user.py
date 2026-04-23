@@ -29,7 +29,7 @@ class CheckUser(commands.Cog):
 
         alert_list: str = "\n".join(
             [
-                f"{alert['alert']} | :mailbox_with_mail: [Ir al mensaje]({alert['url']})"
+                f"`{alert['code']}` {alert['alert']} | :mailbox_with_mail: [Ir al mensaje]({alert['url']})"
                 for alert in user_alerts
             ]
         )

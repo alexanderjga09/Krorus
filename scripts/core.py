@@ -16,6 +16,7 @@ from .cogs.list_users import ListUsers
 from .cogs.set_data import SetData
 from .cogs.whisper import Whisper
 from .modules.audio import transcribe_audio
+from .modules.code import generate_code
 from .modules.database import try_read_row
 from .modules.logs import Logs
 from .modules.message import Message
@@ -68,7 +69,7 @@ class Krorus(commands.Bot):
             print(f"✅ Bot añadido a servidor autorizado: {guild.name}")
 
     async def _send_alert(
-        self, message, title, details
+        self, message, code, title, details
     ):  # Este metodo es la estructura para enviar alertas al canal de staff
 
         staff_channel_id = BD[0]
@@ -101,7 +102,9 @@ class Krorus(commands.Bot):
             inline=False,
         )
 
-        await staff_channel.send(embed=embed)
+        code_ = f"**Code:** {code}" if code else ""
+
+        await staff_channel.send(code_, embed=embed)
         print("Alerta enviada")
 
     async def on_message(self, message):
@@ -148,18 +151,21 @@ class Krorus(commands.Bot):
 
                     misconduct = await msg.Misconduct(GROQ_CLIENT)
                     if misconduct:
+                        code = generate_code()
                         if not discord.utils.get(
                             message.author.roles, id=BD[1]
                         ):  # Si el usuario no tiene el rol necesario, no hacemos nada
                             logs = Logs()
                             logs.addAlert(
                                 message.author.id,
-                                "Mensaje inapropiado (protegido mencionados)",
+                                code,
+                                f"Msg INA. [to {ref_message.author.mention}]",
                                 message.jump_url,
                             )
 
                         await self._send_alert(
                             message,
+                            code,
                             "❗ Mensaje inapropiado",
                             f"Dicho a: {ref_message.author.mention}\n**Contenido:**\n```{message.content}```",
                         )
@@ -179,18 +185,22 @@ class Krorus(commands.Bot):
 
                     misconduct = await msg.Misconduct(GROQ_CLIENT)
                     if misconduct:
+                        code = generate_code()
+
                         if not discord.utils.get(
                             member.roles, id=BD[1]
                         ):  # Si el usuario no tiene el rol necesario, no hacemos nada
                             logs = Logs()
                             logs.addAlert(
                                 message.author.id,
-                                "Mensaje inapropiado (protegido mencionados)",
+                                code,
+                                "Msg INA. [Protect M.]",
                                 message.jump_url,
                             )
 
                         await self._send_alert(
                             message,
+                            code,
                             "❗ Mensaje inapropiado",
                             f"Protegidos mencionados: {', '.join([m.mention for m in members if discord.utils.get(m.roles, id=BD[1])])}\n**Contenido:**\n```{message.content}```",
                         )

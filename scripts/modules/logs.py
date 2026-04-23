@@ -11,14 +11,16 @@ class Logs:
 
             js.dump(init, f)
 
-    def addAlert(self, id, alert, url):
+    def addAlert(self, id, code, alert, url):
         try:
             with open("data/logs.json", "r+") as f:
                 data = js.load(f)
                 if str(id) not in data["users"]:
                     data["users"][str(id)] = []
 
-                data["users"][str(id)].append({"alert": alert, "url": url})
+                data["users"][str(id)].append(
+                    {"code": code, "alert": alert, "url": url}
+                )
                 f.seek(0)
                 js.dump(data, f, indent=4)
                 f.truncate()
