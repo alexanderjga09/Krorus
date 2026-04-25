@@ -29,7 +29,7 @@ class CheckUser(commands.Cog):
 
         alert_list: str = "\n".join(
             [
-                f"`{alert['code']}`\n{alert['alert']} | [:mailbox_with_mail:]({alert['url']})"
+                f"`{alert['code']}` ({alert['timestamp']})\n{alert['alert']} | [:mailbox_with_mail:]({alert['url']})\n_ _"
                 for alert in user_alerts
             ]
         )
@@ -42,3 +42,14 @@ class CheckUser(commands.Cog):
         embed.set_thumbnail(url=member.avatar.url)
 
         await ctx.respond(embed=embed)
+
+    @commands.slash_command(name="remove-alert", description="")
+    async def remove_alert(
+        self,
+        ctx: discord.ApplicationContext,
+        member: discord.Member,
+        code: discord.Option(str, description="Codigo de la alerta"),
+    ) -> None:
+        logs = Logs()
+        logs.removeAlert(member.id, code)
+        await ctx.respond("Alert removed.")

@@ -28,7 +28,14 @@ class BotSetupGUI:
 
         self.process_queue = queue.Queue()
         self.running_process = None
-        self.process_lock = threading.Lock()  # Para evitar condiciones de carrera
+        self.process_lock = threading.Lock()
+
+        # Banderas de estado
+        self._restart_requested = False
+        self.is_busy = False  # Previene doble clics o solapamiento de acciones
+
+        # Escuchar cambios en la ruta del proyecto para habilitar/deshabilitar botones dinámicamente
+        self.project_path.trace_add("write", lambda *args: self.update_button_states())
 
         # Configurar protocolo de cierre
         self.root.protocol("WM_DELETE_WINDOW", self.on_closing)
@@ -41,6 +48,9 @@ class BotSetupGUI:
         self.create_left_panel()
         self.create_right_panel()
         self.poll_queue()
+
+        # Inicializar estado de los botones al arrancar
+        self.update_button_states()
 
     def create_left_panel(self):
         """Panel izquierdo con configuración."""
@@ -58,7 +68,7 @@ class BotSetupGUI:
         path_frame = ttk.Frame(left_frame)
         path_frame.grid(row=1, column=1, sticky="ew", pady=5)
         path_frame.columnconfigure(0, weight=1)
-        ttk.Entry(path_frame, textvariable=self.project_path).grid(
+        ttk.Entry(path_frame, textvariable=self.project_path, state="readonly").grid(
             row=0, column=0, sticky="ew"
         )
         ttk.Button(path_frame, text="Examinar...", command=self.browse_folder).grid(
@@ -94,7 +104,7 @@ class BotSetupGUI:
         self.show_groq_btn.grid(row=0, column=1, padx=(5, 0))
 
         # VirusTotal API Key
-        ttk.Label(left_frame, text="VirusTotal API Key:").grid(
+        ttk.Label(left_frame, text="VirusTotal API:").grid(
             row=4, column=0, sticky="w", pady=5
         )
         vt_frame = ttk.Frame(left_frame)
@@ -117,7 +127,7 @@ class BotSetupGUI:
 
         # Estado de ejecución
         self.status_label = ttk.Label(
-            left_frame, text="● Inactivo", font=("TkDefaultFont", 10)
+            left_frame, text="● Esperando directorio...", font=("TkDefaultFont", 10)
         )
         self.status_label.grid(row=6, column=0, columnspan=2, pady=(10, 5))
         self.status_label.config(foreground="gray")
@@ -125,27 +135,39 @@ class BotSetupGUI:
         # Botones
         btn_frame = ttk.Frame(left_frame)
         btn_frame.grid(row=7, column=0, columnspan=2, pady=10)
-        self.setup_btn = ttk.Button(
-            btn_frame,
-            text="⚙️ Configurar e Instalar",
-            command=self.start_setup,
-            bootstyle=SUCCESS,
-        )
-        self.setup_btn.pack(side="left", padx=5)
-        self.start_btn = ttk.Button(
-            btn_frame, text="▶️ Ejecutar Bot", command=self.start_bot, bootstyle=INFO
-        )
-        self.start_btn.pack(side="left", padx=5)
-        self.stop_btn = ttk.Button(
-            btn_frame,
-            text="⏹️ Detener",
-            command=self.stop_bot,
-            bootstyle=DANGER,
-            state="disabled",
-        )
-        self.stop_btn.pack(side="left", padx=5)
 
-        # Estado de visibilidad
+        self.setup_btn = ttk.Button(
+            btn_frame, text="⚙️ Configurar", command=self.start_setup, bootstyle=SUCCESS
+        )
+        self.setup_btn.pack(side="left", padx=3)
+
+        self.start_btn = ttk.Button(
+            btn_frame, text="▶️ Iniciar", command=self.start_bot, bootstyle=INFO
+        )
+        self.start_btn.pack(side="left", padx=3)
+
+        self.stop_btn = ttk.Button(
+            btn_frame, text="⏹️ Detener", command=self.stop_bot, bootstyle=DANGER
+        )
+        self.stop_btn.pack(side="left", padx=3)
+
+        self.restart_btn = ttk.Button(
+            btn_frame,
+            text="🔄 Reiniciar",
+            command=self.restart_bot,
+            bootstyle="warning",
+        )
+        self.restart_btn.pack(side="left", padx=3)
+
+        self.update_btn = ttk.Button(
+            btn_frame,
+            text="⬇️ Actualizar",
+            command=self.check_for_updates,
+            bootstyle="secondary",
+        )
+        self.update_btn.pack(side="left", padx=3)
+
+        # Estados de visibilidad
         self.token_visible = False
         self.groq_visible = False
         self.vt_visible = False
@@ -163,7 +185,6 @@ class BotSetupGUI:
             right_frame, text="Consola de salida", font=("TkDefaultFont", 10, "bold")
         ).grid(row=0, column=0, sticky="w", pady=(0, 5))
 
-        # Usamos ScrolledText de ttkbootstrap para estilo consistente
         self.console = ScrolledText(
             right_frame,
             wrap="word",
@@ -180,6 +201,43 @@ class BotSetupGUI:
         self.console.tag_config("success", foreground="#6a9955")
         self.console.tag_config("info", foreground="#4ec9b0")
         self.console.tag_config("warning", foreground="#dcdcaa")
+
+    # --- Gestor de Estados Dinámico ---
+    def update_button_states(self):
+        """Habilita/deshabilita los botones basándose en el estado actual del bot."""
+        has_project = bool(self.project_path.get().strip())
+        is_running = self.is_process_running()
+
+        if self.is_busy:
+            # Bloquear todo si hay una tarea asíncrona bloqueante ejecutándose (ej. instalando, actualizando, matando proceso)
+            self.setup_btn.config(state="disabled")
+            self.start_btn.config(state="disabled")
+            self.stop_btn.config(state="disabled")
+            self.restart_btn.config(state="disabled")
+            self.update_btn.config(state="disabled")
+            return
+
+        # Configurar y Start requieren que HAYA un proyecto y que NO esté corriendo
+        normal_if_ready = "normal" if (has_project and not is_running) else "disabled"
+        self.setup_btn.config(state=normal_if_ready)
+        self.start_btn.config(state=normal_if_ready)
+
+        # Detener y Reiniciar requieren que el bot SÍ esté corriendo
+        normal_if_running = "normal" if is_running else "disabled"
+        self.stop_btn.config(state=normal_if_running)
+        self.restart_btn.config(state=normal_if_running)
+
+        # Actualizar requiere que haya un proyecto cargado (puede ejecutarse aunque el bot corra o no)
+        self.update_btn.config(state="normal" if has_project else "disabled")
+
+        # Etiqueta de estado visual
+        if not is_running and not self.is_busy:
+            if has_project:
+                self.status_label.config(text="● Inactivo (Listo)", foreground="gray")
+            else:
+                self.status_label.config(
+                    text="● Esperando directorio...", foreground="gray"
+                )
 
     # --- Métodos de visibilidad ---
     def toggle_token_visibility(self):
@@ -202,7 +260,7 @@ class BotSetupGUI:
         folder = filedialog.askdirectory(title="Selecciona la carpeta del proyecto")
         if folder:
             self.project_path.set(folder)
-            self.log(f"Carpeta seleccionada: {folder}", "info")
+            self.log(f"📁 Carpeta seleccionada: {folder}", "info")
             self.load_env_file(folder)
 
     def load_env_file(self, folder_path):
@@ -211,29 +269,35 @@ class BotSetupGUI:
             return
         try:
             content = env_path.read_text(encoding="utf-8")
+
+            # Mejorado: Ahora capta valores tanto si tienen comillas como si no las tienen
             patterns = {
-                "TOKEN": r'TOKEN\s*=\s*["\']([^"\']*)["\']',
-                "GROQ_API_KEY": r'GROQ_API_KEY\s*=\s*["\']([^"\']*)["\']',
-                "VIRUSTOTAL_API_KEY": r'VIRUSTOTAL_API_KEY\s*=\s*["\']([^"\']*)["\']',
-                "ALLOWED_GUILD_ID": r'ALLOWED_GUILD_ID\s*=\s*["\']([^"\']*)["\']',
+                "TOKEN": r'^TOKEN\s*=\s*["\']?(.*?)["\']?$',
+                "GROQ_API_KEY": r'^GROQ_API_KEY\s*=\s*["\']?(.*?)["\']?$',
+                "VIRUSTOTAL_API_KEY": r'^VIRUSTOTAL_API_KEY\s*=\s*["\']?(.*?)["\']?$',
+                "ALLOWED_GUILD_ID": r'^ALLOWED_GUILD_ID\s*=\s*["\']?(.*?)["\']?$',
             }
-            if not self.token.get():
-                match = re.search(patterns["TOKEN"], content)
+
+            updates = 0
+            for key, pattern in patterns.items():
+                match = re.search(pattern, content, re.MULTILINE)
                 if match:
-                    self.token.set(match.group(1))
-            if not self.groq_key.get():
-                match = re.search(patterns["GROQ_API_KEY"], content)
-                if match:
-                    self.groq_key.set(match.group(1))
-            if not self.vt_key.get():
-                match = re.search(patterns["VIRUSTOTAL_API_KEY"], content)
-                if match:
-                    self.vt_key.set(match.group(1))
-            if not self.guild_id.get():
-                match = re.search(patterns["ALLOWED_GUILD_ID"], content)
-                if match:
-                    self.guild_id.set(match.group(1))
-            self.log("📁 Valores cargados desde .env existente", "info")
+                    val = match.group(1).strip()
+                    if key == "TOKEN" and not self.token.get():
+                        self.token.set(val)
+                        updates += 1
+                    elif key == "GROQ_API_KEY" and not self.groq_key.get():
+                        self.groq_key.set(val)
+                        updates += 1
+                    elif key == "VIRUSTOTAL_API_KEY" and not self.vt_key.get():
+                        self.vt_key.set(val)
+                        updates += 1
+                    elif key == "ALLOWED_GUILD_ID" and not self.guild_id.get():
+                        self.guild_id.set(val)
+                        updates += 1
+
+            if updates > 0:
+                self.log("🔑 Valores cargados desde .env existente", "info")
         except Exception as e:
             self.log(f"Error al leer .env: {e}", "error")
 
@@ -272,9 +336,8 @@ class BotSetupGUI:
                     check=False,
                 )
             else:
-                # En sistemas Unix, usar pkill con el PGID
                 subprocess.run(["pkill", "-P", str(pid)], check=False)
-                os.kill(pid, 15)  # SIGTERM
+                os.kill(pid, 15)
         except Exception as e:
             self.log(f"Error al matar proceso: {e}", "error")
 
@@ -303,17 +366,13 @@ class BotSetupGUI:
             }
 
             if sys.platform == "win32":
-                # Ocultar ventana de consola en Windows
                 startupinfo = subprocess.STARTUPINFO()
                 startupinfo.dwFlags |= subprocess.STARTF_USESHOWWINDOW
                 startupinfo.wShowWindow = subprocess.SW_HIDE
                 kwargs["startupinfo"] = startupinfo
                 kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
-                # Usar shell=False es más seguro, pero si se requiere shell por rutas con espacios
-                # se puede usar shell=True manteniendo los flags de ocultamiento.
                 kwargs["shell"] = False
             else:
-                # En Unix, crear nueva sesión para poder matar el grupo de procesos
                 kwargs["preexec_fn"] = os.setsid
 
             process = subprocess.Popen(cmd, **kwargs)
@@ -327,55 +386,45 @@ class BotSetupGUI:
 
             with self.process_lock:
                 self.running_process = None
-            self.process_queue.put(("finish", return_code))
 
             if on_finish is not None:
-                cb = on_finish
-                self.root.after(0, lambda rc=return_code: cb(rc))
+                safe_on_finish = on_finish
+                self.root.after(0, lambda rc=return_code: safe_on_finish(rc))
 
         threading.Thread(target=target, daemon=True).start()
 
     def poll_queue(self):
+        """Recoge los logs de los procesos en segundo plano."""
         try:
             while True:
                 msg_type, content = self.process_queue.get_nowait()
                 if msg_type == "log":
                     self.log(content)
-                elif msg_type == "finish":
-                    # El proceso terminó, actualizar UI
-                    self.root.after(0, self.update_ui_after_process)
         except queue.Empty:
             pass
         finally:
             self.root.after(100, self.poll_queue)
 
-    def update_ui_after_process(self):
-        """Actualiza la interfaz después de que termine el proceso."""
-        if not self.is_process_running():
-            self.status_label.config(text="● Inactivo", foreground="gray")
-            self.stop_btn.config(state="disabled")
-            self.start_btn.config(state="normal")
-            self.setup_btn.config(state="normal")
-
     def on_closing(self):
-        """Maneja el cierre de la ventana."""
         if self.is_process_running():
             if messagebox.askokcancel(
-                "Salir",
-                "Hay un bot en ejecución. ¿Deseas detenerlo y salir?",
+                "Salir", "Hay un bot en ejecución. ¿Deseas detenerlo y salir?"
             ):
                 self.stop_bot(wait=True)
             else:
                 return
         self.root.destroy()
 
-    # --- Configuración ---
+    # --- Configuración e Instalación ---
     def start_setup(self):
-        if not self.validate_inputs():
+        if not self.validate_inputs() or self.is_busy:
             return
+
         self.clear_console()
+        self.is_busy = True
+        self.update_button_states()
+        self.status_label.config(text="● Configurando Entorno...", foreground="orange")
         self.log("🚀 Iniciando configuración...", "info")
-        self.set_buttons_state("disabled", except_stop=False)
 
         env_path = Path(self.project_path.get()) / ".env"
         env_content = "\n".join(
@@ -386,12 +435,13 @@ class BotSetupGUI:
                 f'ALLOWED_GUILD_ID="{self.guild_id.get()}"',
             ]
         )
+
         try:
             env_path.write_text(env_content, encoding="utf-8")
             self.log("✅ Archivo .env creado/actualizado", "success")
         except Exception as e:
             self.log(f"❌ Error al crear .env: {e}", "error")
-            self.set_buttons_state("normal")
+            self._end_setup_process()
             return
 
         venv_path = Path(self.project_path.get()) / ".venv"
@@ -406,10 +456,10 @@ class BotSetupGUI:
     def after_venv_created(self, return_code, venv_path):
         if return_code != 0:
             self.log("❌ Fallo al crear el entorno virtual.", "error")
-            self.set_buttons_state("normal")
+            self._end_setup_process()
             return
-        self.log("✅ Entorno virtual creado.", "success")
 
+        self.log("✅ Entorno virtual creado.", "success")
         if sys.platform == "win32":
             pip_exec = venv_path / "Scripts" / "pip.exe"
         else:
@@ -421,29 +471,27 @@ class BotSetupGUI:
                 "⚠️ No se encontró requirements.txt, se omite instalación.", "warning"
             )
             self.log("🎉 ¡Configuración completada con éxito!", "success")
-            self.set_buttons_state("normal")
+            self._end_setup_process()
             return
 
         self.log("📦 Instalando dependencias...", "info")
         self.run_command_in_thread(
             [str(pip_exec), "install", "-r", str(req_file)],
             cwd=self.project_path.get(),
-            on_finish=lambda code: self.after_deps_installed(code),
+            on_finish=lambda code: self.after_deps_installed(code, venv_path),
         )
 
-    def after_deps_installed(self, return_code):
+    def after_deps_installed(self, return_code, venv_path):
         if return_code != 0:
             self.log("❌ Fallo en la instalación de dependencias.", "error")
-            self.set_buttons_state("normal")
+            self._end_setup_process()
             return
 
         self.log("✅ Dependencias instaladas.", "success")
-
-        # Verificar importación de módulos críticos
-        venv_path = Path(self.project_path.get()) / ".venv"
         python_exe = (
             venv_path / ("Scripts" if sys.platform == "win32" else "bin") / "python.exe"
         )
+
         try:
             subprocess.run(
                 [str(python_exe), "-c", "import aiohttp, discord, groq"],
@@ -477,41 +525,38 @@ class BotSetupGUI:
             self.log("✅ aiohttp reinstalado correctamente.", "success")
 
         self.log("🎉 ¡Configuración completada con éxito!", "success")
-        self.set_buttons_state("normal")
+        self._end_setup_process()
+
+    def _end_setup_process(self):
+        """Helper para liberar la interfaz al terminar de configurar."""
+        self.is_busy = False
+        self.update_button_states()
 
     # --- Ejecución del bot ---
     def start_bot(self):
-        if not self.project_path.get():
-            messagebox.showerror("Error", "No se ha seleccionado carpeta del proyecto.")
+        if not self.project_path.get() or self.is_busy:
             return
 
-        # Verificar si ya hay un proceso corriendo
         if self.is_process_running():
-            response = messagebox.askyesno(
-                "Bot en ejecución",
-                "Ya hay un bot ejecutándose. ¿Deseas detenerlo y ejecutar uno nuevo?",
-            )
-            if response:
-                self.stop_bot(wait=True)
-            else:
-                return
+            return
 
         venv_path = Path(self.project_path.get()) / ".venv"
-        if sys.platform == "win32":
-            python_venv = venv_path / "Scripts" / "python.exe"
-        else:
-            python_venv = venv_path / "bin" / "python"
+        python_venv = (
+            venv_path
+            / ("Scripts" if sys.platform == "win32" else "bin")
+            / ("python.exe" if sys.platform == "win32" else "python")
+        )
+
         if not python_venv.exists():
-            messagebox.showerror(
-                "Error",
-                "Entorno virtual no encontrado. Ejecuta primero 'Configurar e Instalar'.",
+            self.log(
+                "⚠️ Entorno virtual no encontrado. Ejecuta primero 'Configurar e Instalar'.",
+                "warning",
             )
             return
 
         self.clear_console()
         self.log("🤖 Ejecutando bot...", "info")
-        self.status_label.config(text="● Ejecutando", foreground="green")
-        self.set_buttons_state("disabled", except_stop=True)
+        self.status_label.config(text="● Ejecutando Bot", foreground="green")
 
         self.run_command_in_thread(
             [str(python_venv), "main.py"],
@@ -519,22 +564,35 @@ class BotSetupGUI:
             on_finish=lambda code: self.after_bot_finished(code),
         )
 
+        # Le damos un pequeño respiro a Tkinter para asegurar que capture el nuevo proceso antes de actualizar botones
+        self.root.after(100, self.update_button_states)
+
     def after_bot_finished(self, return_code):
-        if return_code != 0:
+        self.is_busy = (
+            False  # Liberamos interfaz por si venía de un bloqueo de reinicio/detención
+        )
+
+        if return_code != 0 and not self._restart_requested:
             self.log("⚠️ El bot se detuvo con errores.", "error")
+        elif not self._restart_requested:
+            self.log("✅ Bot finalizado.", "success")
+
+        # Flujo de Reinicio Automático
+        if self._restart_requested:
+            self._restart_requested = False
+            self.start_bot()
         else:
-            self.log("✅ Bot finalizado correctamente.", "success")
-        self.update_ui_after_process()
+            self.update_button_states()
 
     def stop_bot(self, wait=False):
-        """Detiene el bot y todos sus procesos hijos.
-        Si wait=True, espera hasta que el proceso termine (para cierre de app)."""
-        if not self.is_process_running():
-            self.log("No hay ningún bot en ejecución.", "info")
-            self.update_ui_after_process()
+        if not self.is_process_running() or self.is_busy:
             return
 
         self.log("🛑 Deteniendo bot...", "warning")
+        self.is_busy = True  # Bloqueamos clics múltiples
+        self.update_button_states()
+        self.status_label.config(text="● Deteniendo...", foreground="orange")
+
         with self.process_lock:
             if self.running_process:
                 pid = self.running_process.pid
@@ -545,35 +603,145 @@ class BotSetupGUI:
                     except subprocess.TimeoutExpired:
                         self.running_process.kill()
                         self.running_process.wait()
-                self.running_process = None
+                # NOTA: NO llamamos a self.update_button_states() aquí.
+                # Dejamos que el hilo en background detecte la muerte del proceso y dispare 'after_bot_finished'
 
-        self.log("✅ Bot detenido.", "success")
-        self.update_ui_after_process()
+    def restart_bot(self):
+        if getattr(self, "is_busy", False) or not self.is_process_running():
+            return
 
-    def set_buttons_state(self, state, except_stop=False):
-        """Habilita/deshabilita botones principales."""
-        if except_stop:
-            self.setup_btn.config(state="disabled")
-            self.start_btn.config(state="disabled")
-            self.stop_btn.config(state="normal")
-        else:
-            for btn in [self.setup_btn, self.start_btn, self.stop_btn]:
-                btn.config(state=state)
-            if self.is_process_running():
-                self.stop_btn.config(state="normal")
-                self.start_btn.config(state="disabled")
-                self.setup_btn.config(state="disabled")
-            else:
-                self.stop_btn.config(state="disabled")
+        self.log("🔄 Reiniciando bot...", "info")
+        self._restart_requested = True
+        self.stop_bot()  # Stop bot ya se encarga del manejo de is_busy y killing
+
+    # --- Verificación de actualizaciones (Git) ---
+    def check_for_updates(self):
+        if not self.project_path.get() or self.is_busy:
+            return
+
+        self.log("🔍 Verificando actualizaciones...", "info")
+        self.is_busy = True
+        self.update_button_states()
+        threading.Thread(target=self._check_for_updates_thread, daemon=True).start()
+
+    def _check_for_updates_thread(self):
+        try:
+            self._do_update_check()
+        except FileNotFoundError:
+            self.root.after(
+                0,
+                lambda: self.log(
+                    "Git no está instalado o no se encuentra en PATH", "error"
+                ),
+            )
+        except Exception as e:
+            error = str(e)
+            self.root.after(0, lambda: self.log(f"Error inesperado: {error}", "error"))
+        finally:
+            self.root.after(0, self._finish_update_check)
+
+    def _finish_update_check(self):
+        self.is_busy = False
+        self.update_button_states()
+
+    def _do_update_check(self):
+        project_dir = self.project_path.get()
+        if not (Path(project_dir) / ".git").exists():
+            self.root.after(
+                0, lambda: self.log("⚠️ No es un repositorio Git", "warning")
+            )
+            return
+
+        try:
+            subprocess.run(
+                ["git", "fetch", "origin"],
+                cwd=project_dir,
+                check=True,
+                capture_output=True,
+                timeout=30,
+            )
+        except subprocess.CalledProcessError:
+            self.root.after(
+                0, lambda: self.log("Error al obtener datos del remoto", "error")
+            )
+            return
+
+        upstream_branch = None
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "@{u}"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            upstream_branch = result.stdout.strip()
+        except subprocess.CalledProcessError:
+            try:
+                result = subprocess.run(
+                    ["git", "remote", "show", "origin"],
+                    cwd=project_dir,
+                    capture_output=True,
+                    text=True,
+                    check=True,
+                    timeout=10,
+                )
+                for line in result.stdout.splitlines():
+                    if "HEAD branch:" in line:
+                        default_branch = line.split("HEAD branch:")[1].strip()
+                        upstream_branch = f"origin/{default_branch}"
+                        break
+            except Exception:
+                pass
+
+        if not upstream_branch:
+            for branch in ["origin/main", "origin/master"]:
+                try:
+                    subprocess.run(
+                        ["git", "rev-parse", "--verify", branch],
+                        cwd=project_dir,
+                        capture_output=True,
+                        check=True,
+                    )
+                    upstream_branch = branch
+                    break
+                except Exception:
+                    continue
+
+        if not upstream_branch:
+            self.root.after(
+                0, lambda: self.log("No se pudo determinar la rama remota", "warning")
+            )
+            return
+
+        try:
+            result = subprocess.run(
+                ["git", "rev-list", "--count", f"HEAD..{upstream_branch}"],
+                cwd=project_dir,
+                capture_output=True,
+                text=True,
+                check=True,
+            )
+            ahead_count = int(result.stdout.strip())
+        except Exception as e:
+            error = str(e)
+            self.root.after(
+                0, lambda: self.log(f"Error al comparar commits: {error}", "error")
+            )
+            return
+
+        msg = (
+            f"¡Actualizaciones disponibles! ({ahead_count} commits nuevos)"
+            if ahead_count > 0
+            else "Ya está actualizado"
+        )
+        tag = "success" if ahead_count > 0 else "info"
+        self.root.after(0, lambda: self.log(msg, tag))
 
 
 if __name__ == "__main__":
     root = ttk.Window(themename="darkly")
-
-    # Fuente global
     style = ttk.Style()
-    default_font = ("Segoe UI", 10)
-    style.configure(".", font=default_font)
-
+    style.configure(".", font=("Segoe UI", 10))
     app = BotSetupGUI(root)
     root.mainloop()

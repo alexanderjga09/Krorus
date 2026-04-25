@@ -1,3 +1,4 @@
+import datetime
 import json as js
 
 
@@ -19,7 +20,14 @@ class Logs:
                     data["users"][str(id)] = []
 
                 data["users"][str(id)].append(
-                    {"code": code, "alert": alert, "url": url}
+                    {
+                        "code": code,
+                        "timestamp": datetime.datetime.now().strftime(
+                            "%H:%M:%S | %d-%m-%Y"
+                        ),
+                        "alert": alert,
+                        "url": url,
+                    }
                 )
                 f.seek(0)
                 js.dump(data, f, indent=4)
@@ -27,6 +35,22 @@ class Logs:
         except FileNotFoundError:
             self.createLog()
             self.addAlert()
+
+    def removeAlert(self, id, code):
+        try:
+            with open("data/logs.json", "r+") as f:
+                data = js.load(f)
+                if str(id) in data["users"]:
+                    data["users"][str(id)] = [
+                        alert
+                        for alert in data["users"][str(id)]
+                        if alert["code"] != code
+                    ]
+                    f.seek(0)
+                    js.dump(data, f, indent=4)
+                    f.truncate()
+        except FileNotFoundError:
+            self.createLog()
 
     def listUsers(self):
         try:
