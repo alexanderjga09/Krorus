@@ -264,10 +264,9 @@ class Krorus(commands.Bot):
             await self.check_voice_channels(member.guild, PROTECTED_ROLE_ID)
 
 
-client = Krorus()
-
-
 def main() -> None:
+    client = Krorus()
+
     client.add_cog(Whisper(client, BD))
     client.add_cog(AppendAlertDomain(client))
     client.add_cog(AppendWhitelistDomain(client))
