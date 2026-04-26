@@ -12,7 +12,10 @@ class SetData(commands.Cog):
     def __init__(self, client):
         self.client = client
 
-    @commands.slash_command(name="set-data", description="")
+    @commands.slash_command(
+        name="set-data",
+        description="Guarda el canal de staff y el rol de protección en la base de datos, y reinicia el bot.",
+    )
     @default_permissions(administrator=True)
     async def set_data(
         self,

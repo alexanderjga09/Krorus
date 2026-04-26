@@ -47,7 +47,7 @@ class AppendWhitelistDomain(commands.Cog):
 
     @commands.slash_command(
         name="remove-whitelist-domain",
-        description="Remove a domain from the whitelist",
+        description="Remover un dominio de la whitelist.",
     )
     @default_permissions(administrator=True)
     async def remove_whitelist_domain(self, ctx, domain: str):
@@ -56,9 +56,7 @@ class AppendWhitelistDomain(commands.Cog):
             if domain in self.whitelist:
                 self.whitelist.remove(domain)
                 await self._write_json(self.whitelist)
-                await ctx.respond(
-                    f"✅ Dominio **{domain}** eliminado de la lista blanca."
-                )
+                await ctx.respond(f"✅ Dominio **{domain}** eliminado de la whitelist.")
             else:
                 await ctx.respond(
                     f"❌ Dominio **{domain}** no está en la lista.", ephemeral=True

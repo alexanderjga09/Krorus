@@ -43,7 +43,10 @@ class AppendAlertDomain(commands.Cog):
 
         await ctx.respond(f"✅ Dominio **{domain}** agregado a la lista de alertas.")
 
-    @commands.slash_command(name="remove_alert_domain")
+    @commands.slash_command(
+        name="remove-alert-domain",
+        description="Elimina un dominio de la lista de alertas.",
+    )
     @default_permissions(administrator=True)
     async def remove_alert_domain(
         self,

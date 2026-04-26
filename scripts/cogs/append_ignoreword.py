@@ -58,7 +58,7 @@ class AppendIgnoreWord(commands.Cog):
 
     @commands.slash_command(
         name="append-ignoreword",
-        description="Append a word to the ignoreword list",
+        description="Añade palabras a la lista de palabras ignoradas.",
     )
     @default_permissions(administrator=True)
     async def append_ignoreword(self, ctx, words: str):
@@ -88,7 +88,7 @@ class AppendIgnoreWord(commands.Cog):
                 )
 
     @commands.slash_command(
-        name="reload-ignorewords", description="Reload the ignoreword list"
+        name="reload-ignorewords", description="Recarga la lista de palabras ignoradas."
     )
     @default_permissions(administrator=True)
     async def reload_ignorewords(self, ctx):

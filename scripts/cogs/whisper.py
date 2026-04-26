@@ -42,7 +42,8 @@ class Whisper(commands.Cog):
         self.bd = bd
 
     @commands.slash_command(
-        name="whisper", description="Envía un mensaje secreto a un usuario."
+        name="whisper",
+        description="Mensaje secreto a usuario. Si protegido envía/recibe whisper, se intercepta.",
     )
     async def whisper(
         self,
