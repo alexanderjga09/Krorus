@@ -9,7 +9,8 @@ from urllib.parse import urlparse
 import aiohttp
 import discord
 
-from .chainlog import ChainLog
+from chainlog_rs import ChainLog
+
 from .code import generate_code
 
 vt_semaphore = asyncio.Semaphore(4)

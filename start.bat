@@ -22,27 +22,33 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: 3. Instalar ttkbootstrap si no está presente
-echo Verificando dependencia: ttkbootstrap...
-python -c "import ttkbootstrap" >nul 2>&1
+:: 3. Instalar Flet si no está presente
+echo Verificando dependencia: Flet...
+python -c "import flet" >nul 2>&1
 if errorlevel 1 (
-    echo Instalando ttkbootstrap...
-    python -m pip install --quiet ttkbootstrap
+    echo Instalando Flet...
+    python -m pip install --quiet flet
     if errorlevel 1 (
-        echo [ERROR] No se pudo instalar ttkbootstrap. Revisa tu conexion a internet.
+        echo [ERROR] No se pudo instalar Flet. Revisa tu conexion a internet.
         pause
         exit /b 1
     )
-    echo ttkbootstrap instalado correctamente.
+    echo Flet instalado correctamente.
 ) else (
-    echo ttkbootstrap ya esta instalado.
+    echo Flet ya esta instalado.
 )
 
 :: 4. Ejecutar la GUI con pythonw (sin consola)
-echo Iniciando la aplicacion...
-start "" pythonw.exe "%~dp0setup_gui.py"
+if exist "%~dp0setup_gui.py" (
+    echo Iniciando la aplicacion...
+    start "" pythonw.exe "%~dp0setup_gui.py"
+) else (
+    echo [ERROR] No se encontro el archivo "setup_gui.py" en el directorio actual.
+    pause
+    exit /b 1
+)
 
-:: Si quieres mantener la consola abierta para ver mensajes, comenta la linea anterior y descomenta:
+:: Si quieres mantener la consola abierta para ver mensajes de error de Python, comenta las lineas anteriores y usa:
 :: python "%~dp0setup_gui.py"
 :: pause
 

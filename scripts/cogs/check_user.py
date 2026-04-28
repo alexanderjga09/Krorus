@@ -5,7 +5,7 @@ import discord
 from discord import default_permissions
 from discord.ext import commands
 
-from scripts.modules.chainlog import ChainLog
+from chainlog_rs import ChainLog
 
 
 class CheckUser(commands.Cog):
