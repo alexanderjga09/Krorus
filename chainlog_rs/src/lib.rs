@@ -250,6 +250,7 @@ impl ChainLog {
         Ok(inner.chain.last().map(|b| b.hash.clone()))
     }
 
+    #[pyo3(signature = (include_pardoned=false))]
     fn get_alerts_by_user(&self, py: Python, include_pardoned: bool) -> PyResult<PyObject> {
         let inner = self.inner.lock().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Mutex lock error: {}", e))
@@ -297,6 +298,7 @@ impl ChainLog {
         Ok(out_list.into())
     }
 
+    #[pyo3(signature = (user_id, include_pardoned=false))]
     fn get_user_alerts(
         &self,
         py: Python,
@@ -312,6 +314,7 @@ impl ChainLog {
         }
     }
 
+    #[pyo3(signature = (code, only_active=true))]
     fn find_alert_index_by_code(&self, code: String, only_active: bool) -> PyResult<Option<usize>> {
         let inner = self.inner.lock().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Mutex lock error: {}", e))
