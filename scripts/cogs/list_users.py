@@ -40,7 +40,7 @@ class ListUsers(commands.Cog):
         await ctx.respond(embed=embed)
 
     @commands.slash_command(
-        name="verify_chain", description="Verificar integridad de la cadena de alertas"
+        name="verify-chain", description="Verificar integridad de la cadena de alertas"
     )
     @commands.is_owner()
     async def verify_chain(self, ctx: discord.ApplicationContext):
