@@ -27,6 +27,12 @@ BD = try_read_row()
 STAFF_CHANNEL_ID = BD[0]
 PROTECTED_ROLE_ID = BD[1]
 
+# Aviso si los datos no están configurados
+if not STAFF_CHANNEL_ID or not PROTECTED_ROLE_ID:
+    print(
+        "⚠️ ADVERTENCIA: STAFF_CHANNEL_ID o PROTECTED_ROLE_ID no están configurados en la base de datos."
+    )
+
 PATH_IGNORE_WORDS = Path(__file__).parent.parent / "data" / "ignorewords.json"
 
 
