@@ -1,7 +1,7 @@
 import discord
 from discord.ext import commands
 
-from scripts.modules.fernet import decrypt_message, encrypt_message
+from scripts.modules.rsa import decrypt_message, encrypt_message
 
 
 class DecryptButton(discord.ui.View):
@@ -65,7 +65,8 @@ class Whisper(commands.Cog):
             or any(role.id == protected_role_id for role in destinatario.roles)
         ):
             await self.client._send_alert(
-                ctx,
+                ctx.author.mention,
+                "",
                 "Mensaje secreto",
                 f"**Destinatario:** {destinatario.mention}\n```{mensaje}```",
             )

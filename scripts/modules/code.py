@@ -1,6 +1,6 @@
-import random
+import secrets
 import string
 
 
 def generate_code() -> str:
-    return "".join(random.choices(string.hexdigits, k=10))
+    return "".join(secrets.choice(string.hexdigits) for _ in range(10))

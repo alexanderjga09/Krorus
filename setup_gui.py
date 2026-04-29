@@ -17,8 +17,11 @@ CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 class BotSetupApp:
     def __init__(self, page: ft.Page):
         self.page = page
-        self.page.title = "Discord Bot Dashboard"
+        self.page.title = "Krorus - Discord Bot Dashboard"
         self.page.theme_mode = ft.ThemeMode.DARK
+
+        # Icono de la ventana
+        self.page.window.icon = "krorus.ico"
 
         # Propiedades de ventana
         self.page.window.width = 1100
@@ -41,6 +44,7 @@ class BotSetupApp:
             read_only=True,
             expand=True,
             border_color=ft.Colors.BLUE_700,
+            hint_text="Selecciona la carpeta donde está tu bot...",
         )
         self.token_entry = ft.TextField(
             label="Discord Bot Token",
@@ -83,6 +87,7 @@ class BotSetupApp:
             icon=ft.Icons.SETTINGS,
             on_click=self.start_setup,
             disabled=True,
+            tooltip="Instala el entorno virtual y dependencias",
         )
         self.start_btn = ft.Button(
             "Iniciar",
@@ -93,6 +98,7 @@ class BotSetupApp:
                 bgcolor=ft.Colors.GREEN_800,
                 color=ft.Colors.WHITE,
             ),
+            tooltip="Ejecuta main.py",
         )
         self.stop_btn = ft.Button(
             "Detener",
@@ -103,6 +109,7 @@ class BotSetupApp:
                 bgcolor=ft.Colors.RED_800,
                 color=ft.Colors.WHITE,
             ),
+            tooltip="Detiene el proceso actual",
         )
         self.restart_btn = ft.IconButton(
             icon=ft.Icons.REFRESH,
@@ -112,7 +119,7 @@ class BotSetupApp:
         )
         self.update_btn = ft.IconButton(
             icon=ft.Icons.SYSTEM_UPDATE_ALT,
-            tooltip="Actualizar Proyecto",
+            tooltip="Actualizar Proyecto (Git Pull)",
             on_click=self.check_for_updates,
             disabled=True,
         )
@@ -122,8 +129,16 @@ class BotSetupApp:
 
         self.setup_ui()
 
+    def show_snackbar(self, text, color=ft.Colors.BLUE_ACCENT):
+        self.page.snack_bar = ft.SnackBar(
+            ft.Text(text),
+            bgcolor=color,
+            action="Cerrar",
+        )
+        self.page.snack_bar.open = True
+        self.page.update()
+
     def pick_folder(self, _):
-        # Implementación mediante Tkinter para solventar el error de comunicación de Flet
         try:
             root = tk.Tk()
             root.withdraw()
@@ -132,7 +147,7 @@ class BotSetupApp:
             root.destroy()
 
             if selected_path:
-                # Clase auxiliar para mantener la compatibilidad con el manejador on_folder_selected
+
                 class MockResultEvent:
                     def __init__(self, path):
                         self.path = path
@@ -140,6 +155,18 @@ class BotSetupApp:
                 self.on_folder_selected(MockResultEvent(selected_path))
         except Exception as ex:
             self.log(f"Error al abrir el selector de archivos: {ex}", ft.Colors.RED_400)
+
+    def open_in_explorer(self, _):
+        path = self.project_path_text.value
+        if not path or not os.path.exists(path):
+            return
+
+        if sys.platform == "win32":
+            os.startfile(path)
+        elif sys.platform == "darwin":
+            subprocess.run(["open", path])
+        else:
+            subprocess.run(["xdg-open", path])
 
     def setup_ui(self):
         # --- Construcción del Panel Izquierdo ---
@@ -154,6 +181,12 @@ class BotSetupApp:
                             ft.IconButton(
                                 ft.Icons.FOLDER_OPEN,
                                 on_click=self.pick_folder,
+                                tooltip="Seleccionar carpeta",
+                            ),
+                            ft.IconButton(
+                                ft.Icons.OPEN_IN_NEW,
+                                on_click=self.open_in_explorer,
+                                tooltip="Abrir en Explorador",
                             ),
                         ]
                     ),
@@ -166,7 +199,7 @@ class BotSetupApp:
             ),
         )
 
-        # 2. Contenedor estático para los botones (Anclado al fondo)
+        # 2. Contenedor estático para los botones
         self.buttons_container = ft.Column(
             [
                 ft.Divider(height=20),
@@ -192,7 +225,11 @@ class BotSetupApp:
         self.page.add(
             ft.Row(
                 [
-                    ft.Icon(ft.Icons.TERMINAL, color=ft.Colors.BLUE_ACCENT, size=30),
+                    ft.Image(src="krorus.ico", width=30, height=30)
+                    if os.path.exists("krorus.ico")
+                    else ft.Icon(
+                        ft.Icons.TERMINAL, color=ft.Colors.BLUE_ACCENT, size=30
+                    ),
                     ft.Text("Krorus GUI", size=24, weight=ft.FontWeight.BOLD),
                 ]
             ),
@@ -214,13 +251,11 @@ class BotSetupApp:
                                     ]
                                 ),
                                 self.settings_container,
-                                ft.Container(
-                                    expand=True
-                                ),  # Empuja los botones al fondo
+                                ft.Container(expand=True),
                                 self.buttons_container,
                             ],
                         ),
-                        width=350,
+                        width=380,
                         padding=20,
                         border_radius=10,
                         bgcolor=ft.Colors.SURFACE,
@@ -406,7 +441,7 @@ class BotSetupApp:
 
         python_exe = sys.executable
         venv_dir = Path(self.project_path_text.value) / ".venv"
-        self.log("🐍 Creando entorno virtual...", ft.Colors.BLUE_200)
+        self.log("🐍 Creando/Verificando entorno virtual...", ft.Colors.BLUE_200)
         self.run_command(
             [python_exe, "-m", "venv", str(venv_dir)],
             cwd=self.project_path_text.value,
@@ -417,12 +452,14 @@ class BotSetupApp:
         if rc != 0:
             self.log("❌ Error al crear entorno virtual", ft.Colors.RED_400)
             self.is_busy = False
+            self.update_states()
             return
 
-        if sys.platform == "win32":
-            pip_exe = venv_dir / "Scripts" / "pip.exe"
-        else:
-            pip_exe = venv_dir / "bin" / "pip"
+        pip_exe = (
+            venv_dir
+            / ("Scripts" if sys.platform == "win32" else "bin")
+            / ("pip.exe" if sys.platform == "win32" else "pip")
+        )
 
         req_file = Path(self.project_path_text.value) / "requirements.txt"
         if req_file.exists():
@@ -441,6 +478,7 @@ class BotSetupApp:
         self.progress_bar.visible = False
         if rc == 0:
             self.log("🎉 Configuración finalizada con éxito!", ft.Colors.GREEN_400)
+            self.show_snackbar("Configuración completada", ft.Colors.GREEN_700)
         else:
             self.log("❌ Hubo errores en la instalación", ft.Colors.RED_400)
         self.update_states()
@@ -449,21 +487,33 @@ class BotSetupApp:
         if self.is_process_running():
             return
 
-        venv_path = Path(self.project_path_text.value) / ".venv"
-        if sys.platform == "win32":
-            python_bin = venv_path / "Scripts" / "python.exe"
-        else:
-            python_bin = venv_path / "bin" / "python"
+        project_dir = Path(self.project_path_text.value)
+        venv_path = project_dir / ".venv"
+        python_bin = (
+            venv_path
+            / ("Scripts" if sys.platform == "win32" else "bin")
+            / ("python.exe" if sys.platform == "win32" else "python")
+        )
+        main_file = project_dir / "main.py"
+
+        if not main_file.exists():
+            self.log(
+                "❌ No se encontró main.py en la carpeta seleccionada.",
+                ft.Colors.RED_400,
+            )
+            self.show_snackbar("Error: main.py no encontrado", ft.Colors.RED_800)
+            return
 
         if not python_bin.exists():
             self.log(
-                "❌ No se encontró el entorno virtual. Configura primero.",
+                "❌ No se encontró el entorno virtual. Ejecuta 'Configurar' primero.",
                 ft.Colors.RED_400,
             )
             return
 
         self.clear_console(None)
         self.log("🤖 Iniciando bot...", ft.Colors.GREEN_200)
+        self.show_snackbar("Bot iniciado", ft.Colors.GREEN_700)
         self.run_command(
             [str(python_bin), "main.py"],
             cwd=self.project_path_text.value,
@@ -476,6 +526,7 @@ class BotSetupApp:
             self.start_bot(None)
         else:
             self.log(f"⏹️ Bot detenido (Código: {rc})", ft.Colors.ORANGE_400)
+            self.show_snackbar(f"Bot detenido (RC: {rc})", ft.Colors.ORANGE_800)
         self.update_states()
 
     def stop_bot(self):
@@ -500,13 +551,13 @@ class BotSetupApp:
         self.is_busy = True
         self.update_states()
         self.log(
-            "🔍 Buscando e instalando actualizaciones (Git)...", ft.Colors.BLUE_200
+            "🔍 Buscando actualizaciones en el repositorio Git...", ft.Colors.BLUE_200
         )
 
         def update():
             try:
                 repo_path = self.project_path_text.value
-                # Sincronizar con el repositorio remoto
+                # Sincronizar
                 subprocess.run(
                     ["git", "fetch"],
                     cwd=repo_path,
@@ -514,7 +565,7 @@ class BotSetupApp:
                     creationflags=CREATE_NO_WINDOW,
                 )
 
-                # Verificar si hay cambios pendientes
+                # Verificar cambios
                 res = subprocess.run(
                     ["git", "rev-list", "--count", "HEAD..@{u}"],
                     cwd=repo_path,
@@ -526,11 +577,9 @@ class BotSetupApp:
 
                 if count > 0:
                     self.log(
-                        f"💡 ¡Hay {count} actualizaciones disponibles! Descargando...",
+                        f"💡 ¡Hay {count} actualizaciones disponibles!",
                         ft.Colors.GREEN_400,
                     )
-
-                    # Realizar el pull de los cambios
                     pull_res = subprocess.run(
                         ["git", "pull"],
                         cwd=repo_path,
@@ -543,8 +592,11 @@ class BotSetupApp:
                         self.log(
                             "✅ Código actualizado con éxito.", ft.Colors.GREEN_400
                         )
+                        self.show_snackbar(
+                            "Proyecto actualizado via Git", ft.Colors.BLUE_800
+                        )
 
-                        # Actualizar dependencias por si acaso
+                        # Re-instalar dependencias por si cambiaron
                         venv_dir = Path(repo_path) / ".venv"
                         req_file = Path(repo_path) / "requirements.txt"
                         if venv_dir.exists() and req_file.exists():
@@ -557,7 +609,6 @@ class BotSetupApp:
                                 / ("Scripts" if sys.platform == "win32" else "bin")
                                 / ("pip.exe" if sys.platform == "win32" else "pip")
                             )
-
                             subprocess.run(
                                 [str(pip_exe), "install", "-r", str(req_file)],
                                 cwd=repo_path,
@@ -572,6 +623,7 @@ class BotSetupApp:
                         )
                 else:
                     self.log("✅ El repositorio está al día.", ft.Colors.BLUE_200)
+                    self.show_snackbar("No hay actualizaciones disponibles")
             except Exception as e:
                 self.log(f"⚠️ Error durante la actualización: {e}", ft.Colors.ORANGE_400)
             finally:

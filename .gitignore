@@ -4,5 +4,4 @@ __pycache__
 logs.json
 .venv
 whitelist.json
-alert_domains.json
-ignorewords.json
+keysDB.json
