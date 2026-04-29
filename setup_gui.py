@@ -112,7 +112,7 @@ class BotSetupApp:
         )
         self.update_btn = ft.IconButton(
             icon=ft.Icons.SYSTEM_UPDATE_ALT,
-            tooltip="Buscar Actualizaciones",
+            tooltip="Actualizar Proyecto",
             on_click=self.check_for_updates,
             disabled=True,
         )
@@ -499,17 +499,22 @@ class BotSetupApp:
     def check_for_updates(self, _):
         self.is_busy = True
         self.update_states()
-        self.log("🔍 Buscando actualizaciones (Git)...", ft.Colors.BLUE_200)
+        self.log(
+            "🔍 Buscando e instalando actualizaciones (Git)...", ft.Colors.BLUE_200
+        )
 
-        def check():
+        def update():
             try:
                 repo_path = self.project_path_text.value
+                # Sincronizar con el repositorio remoto
                 subprocess.run(
                     ["git", "fetch"],
                     cwd=repo_path,
                     capture_output=True,
                     creationflags=CREATE_NO_WINDOW,
                 )
+
+                # Verificar si hay cambios pendientes
                 res = subprocess.run(
                     ["git", "rev-list", "--count", "HEAD..@{u}"],
                     cwd=repo_path,
@@ -518,20 +523,62 @@ class BotSetupApp:
                     creationflags=CREATE_NO_WINDOW,
                 )
                 count = int(res.stdout.strip() or 0)
+
                 if count > 0:
                     self.log(
-                        f"💡 ¡Hay {count} actualizaciones disponibles!",
+                        f"💡 ¡Hay {count} actualizaciones disponibles! Descargando...",
                         ft.Colors.GREEN_400,
                     )
+
+                    # Realizar el pull de los cambios
+                    pull_res = subprocess.run(
+                        ["git", "pull"],
+                        cwd=repo_path,
+                        capture_output=True,
+                        text=True,
+                        creationflags=CREATE_NO_WINDOW,
+                    )
+
+                    if pull_res.returncode == 0:
+                        self.log(
+                            "✅ Código actualizado con éxito.", ft.Colors.GREEN_400
+                        )
+
+                        # Actualizar dependencias por si acaso
+                        venv_dir = Path(repo_path) / ".venv"
+                        req_file = Path(repo_path) / "requirements.txt"
+                        if venv_dir.exists() and req_file.exists():
+                            self.log(
+                                "📦 Verificando nuevas dependencias...",
+                                ft.Colors.BLUE_200,
+                            )
+                            pip_exe = (
+                                venv_dir
+                                / ("Scripts" if sys.platform == "win32" else "bin")
+                                / ("pip.exe" if sys.platform == "win32" else "pip")
+                            )
+
+                            subprocess.run(
+                                [str(pip_exe), "install", "-r", str(req_file)],
+                                cwd=repo_path,
+                                capture_output=True,
+                                creationflags=CREATE_NO_WINDOW,
+                            )
+                            self.log("✅ Dependencias al día.", ft.Colors.GREEN_200)
+                    else:
+                        self.log(
+                            f"❌ Error al hacer pull: {pull_res.stderr}",
+                            ft.Colors.RED_400,
+                        )
                 else:
                     self.log("✅ El repositorio está al día.", ft.Colors.BLUE_200)
             except Exception as e:
-                self.log(f"⚠️ Error al verificar Git: {e}", ft.Colors.ORANGE_400)
+                self.log(f"⚠️ Error durante la actualización: {e}", ft.Colors.ORANGE_400)
             finally:
                 self.is_busy = False
                 self.update_states()
 
-        threading.Thread(target=check, daemon=True).start()
+        threading.Thread(target=update, daemon=True).start()
 
 
 def main(page: ft.Page):
