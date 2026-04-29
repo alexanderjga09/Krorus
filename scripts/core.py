@@ -24,11 +24,6 @@ GROQ_CLIENT = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Leer configuración de BD y validar
 BD = try_read_row()
-if not BD or len(BD) < 2:
-    raise RuntimeError(
-        "No se pudieron leer los datos de configuración desde la base de datos. "
-        "Asegúrate de que la base de datos está inicializada correctamente."
-    )
 STAFF_CHANNEL_ID = BD[0]
 PROTECTED_ROLE_ID = BD[1]
 
