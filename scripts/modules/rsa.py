@@ -1,38 +1,58 @@
 import base64
 import json
+import logging
 import os
 from pathlib import Path
 
 from cryptography.hazmat.primitives import hashes, serialization
 from cryptography.hazmat.primitives.asymmetric import padding, rsa
 
+logger = logging.getLogger(__name__)
+
 KEYS_FILE_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "keysDB.json"
 
 
 def derive_key_from_id(user_id: int) -> rsa.RSAPrivateKey:
-    """Genera u obtiene el par de claves RSA persistiendo la información en un archivo JSON."""
+    """Genera u obtiene el par de claves RSA persistiendo la información en un archivo JSON.
+
+    La escritura se realiza de forma atómica y se intentan aplicar permisos restrictivos al fichero.
+    """
     # Asegurar que el directorio data exista
-    os.makedirs(os.path.dirname(KEYS_FILE_PATH), exist_ok=True)
+    KEYS_FILE_PATH.parent.mkdir(parents=True, exist_ok=True)
 
     # Cargar base de datos de claves desde JSON
     keys_db = {}
-    if os.path.exists(KEYS_FILE_PATH):
-        with open(KEYS_FILE_PATH, "r") as f:
+    if KEYS_FILE_PATH.exists():
+        try:
+            content = KEYS_FILE_PATH.read_text(encoding="utf-8")
+            if content.strip():
+                keys_db = json.loads(content)
+        except json.JSONDecodeError:
+            # Si el JSON está corrupto, renombrar a backup y continuar con DB vacía
+            backup = KEYS_FILE_PATH.with_suffix(".json.bak")
             try:
-                keys_db = json.load(f)
-            except json.JSONDecodeError:
-                keys_db = {}
+                KEYS_FILE_PATH.replace(backup)
+            except Exception as e:
+                logger.exception(f"No se pudo respaldar keysDB corrupto: {e}")
+            keys_db = {}
+        except Exception as e:
+            logger.exception(f"Error al leer keysDB: {e}")
+            keys_db = {}
 
     user_id_str = str(user_id)
 
     if user_id_str in keys_db:
-        # Cargar clave privada existente desde formato PEM
-        private_key = serialization.load_pem_private_key(
-            keys_db[user_id_str].encode("utf-8"), password=None
-        )
-        if not isinstance(private_key, rsa.RSAPrivateKey):
-            raise TypeError("Loaded key is not an RSA private key")
-        return private_key
+        try:
+            private_pem = keys_db[user_id_str].encode("utf-8")
+            private_key = serialization.load_pem_private_key(private_pem, password=None)
+            if not isinstance(private_key, rsa.RSAPrivateKey):
+                raise TypeError("Loaded key is not an RSA private key")
+            return private_key
+        except Exception as e:
+            logger.exception(
+                f"Error cargando la clave privada existente para {user_id}: {e}"
+            )
+            # Fallback: generar nueva clave a continuación
 
     # Si no existe, generar una nueva clave
     private_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
@@ -46,9 +66,19 @@ def derive_key_from_id(user_id: int) -> rsa.RSAPrivateKey:
 
     keys_db[user_id_str] = pem.decode("utf-8")
 
-    # Guardar la base de datos actualizada
-    with open(KEYS_FILE_PATH, "w") as f:
-        json.dump(keys_db, f, indent=4)
+    # Guardar la base de datos actualizada de forma atómica
+    try:
+        tmp = KEYS_FILE_PATH.with_suffix(".tmp")
+        tmp.write_text(json.dumps(keys_db, indent=4), encoding="utf-8")
+        tmp.replace(KEYS_FILE_PATH)
+        try:
+            # Intentar aplicar permisos restrictivos (funciona en POSIX)
+            os.chmod(KEYS_FILE_PATH, 0o600)
+        except Exception:
+            # No crítico en Windows; ignorar si falla
+            pass
+    except Exception as e:
+        logger.exception(f"Error al guardar keysDB: {e}")
 
     return private_key
 

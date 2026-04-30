@@ -1,5 +1,7 @@
+import logging
 import os
 import re
+from contextlib import asynccontextmanager
 from pathlib import Path
 
 import aiohttp
@@ -20,6 +22,13 @@ from .modules.message import Message
 
 load_dotenv()
 
+# Logging setup
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+logger = logging.getLogger("krorus")
+
 GROQ_CLIENT = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
 # Leer configuración de BD y validar
@@ -29,7 +38,7 @@ PROTECTED_ROLE_ID = BD[1]
 
 # Aviso si los datos no están configurados
 if not STAFF_CHANNEL_ID or not PROTECTED_ROLE_ID:
-    print(
+    logger.warning(
         "⚠️ ADVERTENCIA: STAFF_CHANNEL_ID o PROTECTED_ROLE_ID no están configurados en la base de datos."
     )
 
@@ -40,14 +49,41 @@ class Krorus(commands.Bot):
     def __init__(self):
         super().__init__(intents=discord.Intents.all())
         self.allowed_guild_id = int(os.getenv("ALLOWED_GUILD_ID", "0"))
+        self.http_session: aiohttp.ClientSession | None = None
+
+    @asynccontextmanager
+    async def _get_session(self):
+        """Context manager que reutiliza la sesión HTTP compartida o crea una temporal."""
+        if self.http_session:
+            yield self.http_session
+        else:
+            async with aiohttp.ClientSession() as session:
+                yield session
+
+    async def setup_hook(self) -> None:
+        # Called before the bot connects; create a shared HTTP session
+        try:
+            self.http_session = aiohttp.ClientSession()
+            logger.info("HTTP client session creada.")
+        except Exception as e:
+            logger.exception(f"No se pudo crear session HTTP: {e}")
+
+    async def close(self) -> None:
+        # Close shared session when bot shuts down
+        try:
+            if self.http_session:
+                await self.http_session.close()
+                logger.info("HTTP client session cerrada.")
+        finally:
+            await super().close()
 
     async def on_ready(self):
         await self.change_presence(status=discord.Status.invisible)
-        print(f"Logged in as {self.user}")
+        logger.info(f"Logged in as {self.user}")
 
         for guild in self.guilds:
             if guild.id != self.allowed_guild_id:
-                print(
+                logger.warning(
                     f"🚫 Servidor no autorizado detectado al iniciar: {guild.name} ({guild.id}). Abandonando..."
                 )
                 try:
@@ -60,9 +96,8 @@ class Krorus(commands.Bot):
                     await guild.leave()
 
     async def on_guild_join(self, guild):
-        # Corregido el nombre de la variable (todo minúsculas)
         if guild.id != self.allowed_guild_id:
-            print(
+            logger.warning(
                 f"🚫 Bot añadido a servidor no autorizado: {guild.name} ({guild.id}). Abandonando..."
             )
             try:
@@ -74,7 +109,7 @@ class Krorus(commands.Bot):
             finally:
                 await guild.leave()
         else:
-            print(f"✅ Bot añadido a servidor autorizado: {guild.name}")
+            logger.info(f"✅ Bot añadido a servidor autorizado: {guild.name}")
 
     async def _send_alert(self, message_or_text, code, title, details, file=None):
         """
@@ -84,7 +119,7 @@ class Krorus(commands.Bot):
         """
         staff_channel = self.get_channel(STAFF_CHANNEL_ID)
         if not isinstance(staff_channel, discord.TextChannel):
-            print("Canal de staff no válido")
+            logger.error("Canal de staff no válido")
             return
 
         embed = discord.Embed(title=title, color=0xFF0000)
@@ -94,11 +129,11 @@ class Krorus(commands.Bot):
             try:
                 user = f"Usuario: {message_or_text.author.mention}"
             except Exception as e:
-                print(f"Error al obtener el nombre del usuario: {e}")
+                logger.exception(f"Error al obtener el nombre del usuario: {e}")
                 user = ""
 
             embed.description = user
-            code_str = f"**Code:** {code}" if code else ""
+            code_str = f"**Code:** {code}" if code else None
 
             try:
                 jump_url = f":mailbox_with_mail: [Ir directamente al mensaje]({message_or_text.jump_url})"
@@ -113,26 +148,48 @@ class Krorus(commands.Bot):
                     embed.add_field(name="", value=jump_url, inline=False)
                     await staff_channel.send(code_str, embed=embed)
                     await staff_channel.send(details, file=file)
+                return
             except AttributeError:
                 embed.add_field(name="Detalles", value=details, inline=False)
                 await staff_channel.send(code_str, embed=embed, file=file)
+                return
+            except Exception as e:
+                logger.exception(f"Error al enviar alerta: {e}")
+                return
+
         else:
             # Alerta sin mensaje (p.ej. supervisión de voz)
             if message_or_text:
                 embed.description = str(message_or_text)
-            code_str = f"**Code:** {code}" if code else ""
+            code_str = f"**Code:** {code}" if code else None
             embed.add_field(name="Detalles", value=details, inline=False)
-            await staff_channel.send(code_str, embed=embed, file=file)
+            try:
+                await staff_channel.send(code_str, embed=embed, file=file)
+            except Exception as e:
+                logger.exception(f"Error al enviar alerta sin mensaje: {e}")
+            return
 
     async def on_message(self, message):
         if message.author.bot:
             return
 
-        if message.guild.id != self.allowed_guild_id:
-            await message.guild.leave()
+        # Ignorar mensajes directos (DMs)
+        if not message.guild:
             return
 
-        if not message.guild:
+        # Salir de servidores no autorizados
+        if message.guild.id != self.allowed_guild_id:
+            logger.warning(
+                f"🚫 Servidor no autorizado detectado en on_message: {message.guild.name} ({message.guild.id}). Abandonando..."
+            )
+            try:
+                if message.guild.owner:
+                    await message.guild.owner.send(
+                        "Este bot es privado y solo funciona en un servidor autorizado. "
+                        "Si crees que esto es un error, contacta al desarrollador."
+                    )
+            finally:
+                await message.guild.leave()
             return
 
         # Ignorar palabras configuradas
@@ -142,31 +199,24 @@ class Krorus(commands.Bot):
 
         # 1. Respuesta a un mensaje de usuario protegido
         if message.reference:
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session() as session:
                 vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
-
-                ref_message = await message.channel.fetch_message(
-                    message.reference.message_id
-                )
-
                 msg = Message(message)
                 result = await msg._ref_message(
                     PROTECTED_ROLE_ID,
                     GROQ_CLIENT,
                     vt_api_key,
                     session,
-                    ref_message.author,
                 )
                 if result is not None:
                     code, alert, details, file = result
                     await self._send_alert(message, code, alert, details, file)
-                return
+            return
 
         # 2. Menciones a usuarios protegidos
         if ids := re.findall(r"<@!?(\d+)>", message.content):
-            async with aiohttp.ClientSession() as session:
+            async with self._get_session() as session:
                 vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
-
                 msg = Message(message)
                 result = await msg._mention_user(
                     ids, PROTECTED_ROLE_ID, GROQ_CLIENT, vt_api_key, session
@@ -174,7 +224,7 @@ class Krorus(commands.Bot):
                 if result is not None:
                     code, alert, details, file = result
                     await self._send_alert(message, code, alert, details, file)
-                return
+            return
 
         # 3. A partir de aquí, solo se procesa si el autor es un usuario protegido
         member = message.author
@@ -203,7 +253,7 @@ class Krorus(commands.Bot):
         msg = Message(message)
 
         # Escaneo de enlaces con VirusTotal
-        async with aiohttp.ClientSession() as session:
+        async with self._get_session() as session:
             vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
             alert_url, dominio, url = await msg.CheckAndAlert(vt_api_key, session)
 
@@ -243,13 +293,14 @@ class Krorus(commands.Bot):
                 elif att.content_type.startswith(("image/", "video/", "file/")):
                     file_discord = await att.to_file()
 
-                    match re.match(r"^(\w+)/", att.content_type).group(1):
-                        case "image":
+                    m = re.match(r"^(\w+)/", att.content_type)
+                    tipo = "Archivo"
+                    if m:
+                        kind = m.group(1)
+                        if kind == "image":
                             tipo = "Imagen"
-                        case "video":
+                        elif kind == "video":
                             tipo = "Video"
-                        case "file":
-                            tipo = "Archivo"
 
                     await self._send_alert(
                         message,
@@ -262,6 +313,15 @@ class Krorus(commands.Bot):
 
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
         if after.author.bot:
+            return
+
+        # Ignorar DMs y servidores no autorizados
+        if not after.guild or after.guild.id != self.allowed_guild_id:
+            return
+
+        # Solo alertar si el autor tiene el rol protegido
+        member = after.guild.get_member(after.author.id)
+        if not member or not discord.utils.get(member.roles, id=PROTECTED_ROLE_ID):
             return
 
         if before.content != after.content:
@@ -306,9 +366,9 @@ class Krorus(commands.Bot):
 
         if before.channel != after.channel:
             if after.channel:
-                print(f"{member.display_name} se unió a {after.channel.name}")
+                logger.info(f"{member.display_name} se unió a {after.channel.name}")
             elif before.channel:
-                print(f"{member.display_name} salió de {before.channel.name}")
+                logger.info(f"{member.display_name} salió de {before.channel.name}")
 
             await self.check_voice_channels(member.guild, PROTECTED_ROLE_ID)
 

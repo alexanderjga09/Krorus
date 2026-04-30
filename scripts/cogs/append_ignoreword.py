@@ -1,10 +1,13 @@
 import asyncio
 import json
+import logging
 import re
 from pathlib import Path
 
 from discord import default_permissions
 from discord.ext import commands
+
+logger = logging.getLogger(__name__)
 
 
 class AppendIgnoreWord(commands.Cog):
@@ -23,11 +26,11 @@ class AppendIgnoreWord(commands.Cog):
             content = self.json_path.read_text(encoding="utf-8")
             data = json.loads(content)
         except (FileNotFoundError, json.JSONDecodeError) as e:
-            print(f"⚠️ No se pudo cargar {self.json_path}: {e}")
+            logger.warning(f"No se pudo cargar {self.json_path}: {e}")
             data = []
         self.ignore_words = data
         self._rebuild_matchers()
-        print(f"✅ AppendIgnoreWord cargado con {len(self.ignore_words)} palabras.")
+        logger.info(f"AppendIgnoreWord cargado con {len(self.ignore_words)} palabras.")
 
     async def cog_load(self):
         """Carga inicial de datos y compilación del patrón."""
@@ -77,8 +80,9 @@ class AppendIgnoreWord(commands.Cog):
     async def remove_ignoreword(self, ctx, word: str):
         word = word.strip().lower()
         async with self.lock:
-            if word in self.ignore_words:
-                self.ignore_words.remove(word)
+            if word in self.ignore_words_set:
+                original = next(w for w in self.ignore_words if w.lower() == word)
+                self.ignore_words.remove(original)
                 await self._write_json(self.ignore_words)
                 self._rebuild_matchers()
                 await ctx.respond(f"✅ Palabra **{word}** eliminada de la lista.")

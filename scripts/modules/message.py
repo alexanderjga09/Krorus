@@ -2,16 +2,20 @@ import asyncio
 import base64
 import io
 import json as js
+import logging
 import re
 from pathlib import Path
 from urllib.parse import urlparse
 
 import aiohttp
 import discord
+import groq
 
 from chainlog_rs import ChainLog
 
 from .code import generate_code
+
+logger = logging.getLogger(__name__)
 
 vt_semaphore = asyncio.Semaphore(4)
 
@@ -33,13 +37,13 @@ class Message:
                 if isinstance(data, list):
                     return data
                 else:
-                    print(f"Formato JSON inesperado en {path}: {type(data)}")
+                    logger.warning(f"Formato JSON inesperado en {path}: {type(data)}")
                     return []
         except FileNotFoundError:
-            print(f"Archivo no encontrado: {path}")
+            logger.debug(f"Archivo no encontrado: {path}")
             return []
         except js.JSONDecodeError as e:
-            print(f"Error JSON en {path}: {e}")
+            logger.warning(f"Error JSON en {path}: {e}")
             return []
 
     def _normalize_domain(self, domain):
@@ -72,34 +76,34 @@ class Message:
         if ":" in domain:
             domain = domain.split(":")[0]
 
-        print(f"[DEBUG] URL: {url} | Dominio extraído: {domain}")
+        logger.debug(f"[DEBUG] URL: {url} | Dominio extraído: {domain}")
 
         whitelist_domains = self._load_json_list("whitelist.json")
         alert_domains = self._load_json_list("alert_domains.json")
 
         # 1. Si está en whitelist → omitir
         if self._domain_matches(domain, whitelist_domains):
-            print(f"[INFO] Dominio {domain} en whitelist -> omitido")
+            logger.info(f"[INFO] Dominio {domain} en whitelist -> omitido")
             return False, domain, url
 
         # 2. Si está en alert_domains → alertar sin VT
         if self._domain_matches(domain, alert_domains):
-            print(f"[ALERTA] Dominio {domain} coincide con lista de alerta")
+            logger.warning(f"[ALERTA] Dominio {domain} coincide con lista de alerta")
             return True, domain, url
 
-        print(
+        logger.info(
             f"[INFO] Dominio {domain} no está en listas locales, escaneando con VT..."
         )
         is_malicious = await self._scan_url_vt(session, vt_api_key)
 
         if is_malicious is None:
-            print("[INFO VT] Escaneo fallido o límite alcanzado, se asume seguro")
+            logger.info("[INFO VT] Escaneo fallido o límite alcanzado, se asume seguro")
             return False, domain, url
         elif is_malicious:
-            print("[ALERTA VT] URL maliciosa detectada")
+            logger.warning("[ALERTA VT] URL maliciosa detectada")
             return True, domain, url
         else:
-            print("[INFO] URL segura según VT")
+            logger.info("[INFO] URL segura según VT")
             return False, domain, url
 
     async def _scan_url_vt(self, session, api_key):
@@ -125,7 +129,7 @@ class Message:
                         malicious = stats.get("malicious", 0)
                         return malicious > 0
                     elif response.status == 404:
-                        print(
+                        logger.info(
                             f"[INFO VT] URL no encontrada, enviando a análisis: {self.scanned_url}"
                         )
                         submit_data = {"url": self.scanned_url}
@@ -149,31 +153,31 @@ class Message:
                                         malicious = stats.get("malicious", 0)
                                         return malicious > 0
                                     else:
-                                        print(
+                                        logger.error(
                                             f"[ERROR VT] No se pudo obtener el análisis después del envío: {retry_resp.status}"
                                         )
                                         return False
                             else:
-                                print(
+                                logger.error(
                                     f"[ERROR VT] Fallo al enviar URL: {post_resp.status}"
                                 )
                                 return False
                     elif response.status == 429:
-                        print("[ERROR VT] Límite alcanzado, esperando 60s...")
+                        logger.error("[ERROR VT] Límite alcanzado, esperando 60s...")
                         await asyncio.sleep(60)
                         return None
                     else:
-                        print(f"[ERROR VT] Error inesperado: {response.status}")
+                        logger.error(f"[ERROR VT] Error inesperado: {response.status}")
                         return False
             except aiohttp.ClientError as e:
-                print(f"[ERROR VT] Error de red: {e}")
+                logger.error(f"[ERROR VT] Error de red: {e}")
                 return False
 
     async def transcribe_audio(self, GROQ_CLIENT, member: discord.Member = None):
         if not self.msg.attachments:
             return
         audio_attachment = self.msg.attachments[0]
-        print(
+        logger.debug(
             f"[DEBUG] Transcribing audio: {audio_attachment.filename} (type: {audio_attachment.content_type})"
         )
 
@@ -182,7 +186,7 @@ class Message:
             not audio_attachment.content_type
             or not audio_attachment.content_type.startswith("audio/")
         ):
-            print(
+            logger.debug(
                 f"[DEBUG] Formato de audio no soportado: {audio_attachment.content_type}"
             )
             return (
@@ -220,7 +224,7 @@ class Message:
                 audio_file,
             )
         except Exception as e:
-            print(f"[ERROR] Transcripción fallida: {e}")
+            logger.exception(f"[ERROR] Transcripción fallida: {e}")
             return (
                 "",
                 "❌ Error de transcripción",
@@ -283,18 +287,41 @@ class Message:
                 response = chat_completion.choices[0].message.content.strip().lower()
                 return response.startswith("true")
             except asyncio.TimeoutError:
-                print(f"[Groq] Timeout al analizar mensaje: {self.msg.content[:50]}...")
+                logger.warning(
+                    f"[Groq] Timeout al analizar mensaje: {self.msg.content[:50]}..."
+                )
+                return False
+            except groq.AuthenticationError:
+                logger.error(
+                    "[Groq] API key inválida o sin permisos. "
+                    "Revisa la variable GROQ_API_KEY en el archivo .env."
+                )
+                return False
+            except groq.PermissionDeniedError:
+                logger.error(
+                    "[Groq] Acceso denegado (403). "
+                    "Comprueba tu red (VPN/proxy) o el estado de tu cuenta Groq."
+                )
+                return False
+            except groq.RateLimitError:
+                logger.warning(
+                    "[Groq] Límite de uso alcanzado. Reintenta en unos segundos."
+                )
+                return False
+            except groq.APIConnectionError as e:
+                logger.error(f"[Groq] Error de conexión con la API: {e}")
+                return False
+            except groq.GroqError as e:
+                logger.error(f"[Groq] Error de la API ({type(e).__name__}): {e}")
                 return False
             except Exception as e:
-                print(f"[Groq] Error en la API: {e}")
+                logger.exception(f"[Groq] Error inesperado: {e}")
                 return False
 
         return await _call_groq()
 
-    async def _ref_message(
-        self, role_id, GROQ_CLIENT, vt_api_key, session, member: discord.Member = None
-    ):
-        print(
+    async def _ref_message(self, role_id, GROQ_CLIENT, vt_api_key, session):
+        logger.debug(
             f"[REF] _ref_message llamado para msg {self.msg.id} con referencia a {self.msg.reference.message_id if self.msg.reference else 'None'}"
         )
         try:
@@ -302,65 +329,67 @@ class Message:
                 self.msg.reference.message_id
             )
         except discord.NotFound:
-            print("[REF] Mensaje referenciado no encontrado")
+            logger.debug("[REF] Mensaje referenciado no encontrado")
             return
 
         if ref_message.author == self.msg.author and not discord.utils.get(
             self.msg.author.roles, id=role_id
         ):
-            print("[DEBUG _ref] El autor responde a su propio mensaje → ignorar")
+            logger.debug("[DEBUG _ref] El autor responde a su propio mensaje → ignorar")
             return
 
         # ¿Tiene el usuario original el rol protegido?
-        has_role = any(
-            r.id == role_id for r in ref_message.author.roles
-        ) or discord.utils.get(self.msg.author.roles, id=role_id)
-        print(
-            f"[DEBUG _ref] Roles del autor original: {[r.name for r in ref_message.author.roles]} | Buscando rol {role_id} → {has_role}"
+        author_roles = getattr(ref_message.author, "roles", [])
+        has_role = any(r.id == role_id for r in author_roles) or discord.utils.get(
+            self.msg.author.roles, id=role_id
+        )
+        logger.debug(
+            f"[DEBUG _ref] Roles del autor original: {[r.name for r in author_roles]} | Buscando rol {role_id} → {has_role}"
         )
         if not has_role:
-            print("[DEBUG _ref] El autor NO tiene el rol protegido → ignorar")
+            logger.debug("[DEBUG _ref] El autor NO tiene el rol protegido → ignorar")
             return
 
         if self.msg.attachments:
             att = self.msg.attachments[0]
-            print(
+            logger.debug(
                 f"[DEBUG _ref] Adjunto en la respuesta: {att.filename} (type: {att.content_type})"
             )
             if att.content_type and att.content_type.startswith("audio/"):
-                print(
+                logger.debug(
                     "[DEBUG _ref] Es un audio, procediendo a transcribir la respuesta..."
                 )
                 transcription = await self.transcribe_audio(
                     GROQ_CLIENT,
                     ref_message.author,  # "Mandado a: <usuario protegido>"
                 )
-                print(f"[DEBUG _ref] Resultado transcripción: {transcription}")
+                logger.debug(f"[DEBUG _ref] Resultado transcripción: {transcription}")
                 if transcription:
                     return transcription
                 else:
-                    print("[DEBUG _ref] La transcripción devolvió None")
+                    logger.debug("[DEBUG _ref] La transcripción devolvió None")
                     # Podrías enviar una alerta de error, pero lo dejamos pasar
                     return
             else:
-                print("[DEBUG _ref] El adjunto NO es audio")
+                logger.debug("[DEBUG _ref] El adjunto NO es audio")
 
             if att.content_type and att.content_type.startswith(
                 ("image/", "video/", "file/")
             ):
                 file_discord = await att.to_file()
 
-                match re.match(r"^(\w+)/", att.content_type).group(1):
-                    case "image":
+                m = re.match(r"^(\w+)/", att.content_type)
+                tipo = "Archivo"
+                if m:
+                    kind = m.group(1)
+                    if kind == "image":
                         tipo = "Imagen"
-                    case "video":
+                    elif kind == "video":
                         tipo = "Video"
-                    case "file":
-                        tipo = "Archivo"
 
                 reference = (
-                    f"Mandado a: {member.mention}"
-                    if self.msg.author.id != member.id
+                    f"Mandado a: {ref_message.author.mention}"
+                    if self.msg.author.id != ref_message.author.id
                     else ""
                 )
 
@@ -374,8 +403,8 @@ class Message:
         is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
         if is_suspecious:
             reference = (
-                f"Mandado a: {member.mention}"
-                if self.msg.author.id != member.id
+                f"Mandado a: {ref_message.author.mention}"
+                if self.msg.author.id != ref_message.author.id
                 else ""
             )
 
@@ -387,10 +416,15 @@ class Message:
             )
 
         # Si no había audio en la respuesta, seguir con misconduct sobre el texto
-        print("[DEBUG _ref] Evaluando misconduct en el texto de la respuesta...")
+        logger.debug("[DEBUG _ref] Evaluando misconduct en el texto de la respuesta...")
         misconduct = await self.Misconduct(GROQ_CLIENT)
         if misconduct:
             code = generate_code()
+            reference = (
+                f"Mandado a: {ref_message.author.mention}"
+                if self.msg.author.id != ref_message.author.id
+                else ""
+            )
             if not discord.utils.get(self.msg.author.roles, id=role_id):
                 chain_log = ChainLog(
                     str(Path(__file__).parent.parent.parent / "data" / "logs.json")
@@ -402,12 +436,6 @@ class Message:
                     self.msg.jump_url,
                 )
 
-                reference = (
-                    f"Mandado a: {member.mention}"
-                    if self.msg.author.id != member.id
-                    else ""
-                )
-
             return (
                 code,
                 "❗ Mensaje inapropiado",
@@ -415,7 +443,7 @@ class Message:
                 None,
             )
         else:
-            print("[DEBUG _ref] No se detectó misconduct")
+            logger.debug("[DEBUG _ref] No se detectó misconduct")
 
     async def _mention_user(self, ids, role_id, GROQ_CLIENT, vt_api_key, session):
         # Filtramos IDs no válidos (miembros que no están en el servidor)
@@ -440,13 +468,14 @@ class Message:
                 ):
                     file_discord = await att.to_file()
 
-                    match re.match(r"^(\w+)/", att.content_type).group(1):
-                        case "image":
+                    m = re.match(r"^(\w+)/", att.content_type)
+                    tipo = "Archivo"
+                    if m:
+                        kind = m.group(1)
+                        if kind == "image":
                             tipo = "Imagen"
-                        case "video":
+                        elif kind == "video":
                             tipo = "Video"
-                        case "file":
-                            tipo = "Archivo"
 
                     return (
                         "",

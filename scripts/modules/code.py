@@ -1,6 +1,6 @@
 import secrets
-import string
 
 
 def generate_code() -> str:
-    return "".join(secrets.choice(string.hexdigits) for _ in range(10))
+    # Genera 10 caracteres hexadecimales utilizando secrets.token_hex
+    return secrets.token_hex(5)

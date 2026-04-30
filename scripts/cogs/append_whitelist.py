@@ -50,17 +50,29 @@ class AppendWhitelistDomain(commands.Cog):
         description="Remover un dominio de la whitelist.",
     )
     @default_permissions(administrator=True)
-    async def remove_whitelist_domain(self, ctx, domain: str):
+    async def remove_whitelist_domain(
+        self,
+        ctx: discord.ApplicationContext,
+        domain: discord.Option(str, "Dominio a remover (ej: example.com)"),
+    ) -> None:
         domain = domain.strip().lower()
+        if not self._is_valid_domain(domain):
+            await ctx.respond(
+                f"❌ El dominio **{domain}** no es válido.", ephemeral=True
+            )
+            return
+
         async with self.lock:
-            if domain in self.whitelist:
-                self.whitelist.remove(domain)
-                await self._write_json(self.whitelist)
-                await ctx.respond(f"✅ Dominio **{domain}** eliminado de la whitelist.")
-            else:
+            data = await self._read_json()
+            if domain not in data:
                 await ctx.respond(
                     f"❌ Dominio **{domain}** no está en la lista.", ephemeral=True
                 )
+                return
+            data.remove(domain)
+            await self._write_json(data)
+
+        await ctx.respond(f"✅ Dominio **{domain}** eliminado de la lista blanca.")
 
     def _is_valid_domain(self, domain: str) -> bool:
         pattern = r"^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$"

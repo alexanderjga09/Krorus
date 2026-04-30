@@ -1,3 +1,4 @@
+import json
 import os
 import re
 import subprocess
@@ -10,8 +11,12 @@ from tkinter import filedialog
 
 import flet as ft
 
-# Configuración de flags para subprocesos (Evita errores en sistemas no-Windows)
+# Flags para subprocesos (evita ventana de consola en Windows)
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
+
+# Rutas absolutas para no depender del CWD
+_ICON_PATH = Path(__file__).parent / "krorus.ico"
+_CONFIG_FILE = Path.home() / ".krorus_gui_config.json"
 
 
 class BotSetupApp:
@@ -19,26 +24,22 @@ class BotSetupApp:
         self.page = page
         self.page.title = "Krorus - Discord Bot Dashboard"
         self.page.theme_mode = ft.ThemeMode.DARK
-
-        # Icono de la ventana
-        self.page.window.icon = "krorus.ico"
-
-        # Propiedades de ventana
+        self.page.window.icon = str(_ICON_PATH)
         self.page.window.width = 1100
         self.page.window.height = 750
         self.page.window.min_width = 900
         self.page.window.min_height = 600
-
         self.page.padding = 20
         self.page.theme = ft.Theme(color_scheme_seed=ft.Colors.BLUE_ACCENT)
 
-        # Variables de estado
+        # Estado
         self.running_process = None
         self.process_lock = threading.Lock()
+        self._restart_lock = threading.Lock()
         self._restart_requested = False
         self.is_busy = False
 
-        # Referencias a controles
+        # ── Controles ──────────────────────────────────────────────────────
         self.project_path_text = ft.TextField(
             label="Carpeta del Proyecto",
             read_only=True,
@@ -70,18 +71,21 @@ class BotSetupApp:
         )
 
         # Consola
-        self.console = ft.ListView(
-            expand=True,
-            spacing=2,
-            auto_scroll=True,
-        )
+        self.console = ft.ListView(expand=True, spacing=2, auto_scroll=True)
 
         # Status y Progreso
         self.status_dot = ft.Icon(ft.Icons.CIRCLE, color=ft.Colors.GREY_400, size=12)
         self.status_text = ft.Text("Esperando directorio...", color=ft.Colors.GREY_400)
         self.progress_bar = ft.ProgressBar(visible=False, color=ft.Colors.BLUE_ACCENT)
 
-        # Botones
+        # ── Botones ────────────────────────────────────────────────────────
+        self.save_btn = ft.Button(
+            "Guardar",
+            icon=ft.Icons.SAVE,
+            on_click=self.save_env,
+            disabled=True,
+            tooltip="Guarda las credenciales en .env sin reinstalar dependencias",
+        )
         self.setup_btn = ft.Button(
             "Configurar",
             icon=ft.Icons.SETTINGS,
@@ -94,10 +98,7 @@ class BotSetupApp:
             icon=ft.Icons.PLAY_ARROW,
             on_click=self.start_bot,
             disabled=True,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.GREEN_800,
-                color=ft.Colors.WHITE,
-            ),
+            style=ft.ButtonStyle(bgcolor=ft.Colors.GREEN_800, color=ft.Colors.WHITE),
             tooltip="Ejecuta main.py",
         )
         self.stop_btn = ft.Button(
@@ -105,10 +106,7 @@ class BotSetupApp:
             icon=ft.Icons.STOP,
             on_click=lambda _: self.stop_bot(),
             disabled=True,
-            style=ft.ButtonStyle(
-                bgcolor=ft.Colors.RED_800,
-                color=ft.Colors.WHITE,
-            ),
+            style=ft.ButtonStyle(bgcolor=ft.Colors.RED_800, color=ft.Colors.WHITE),
             tooltip="Detiene el proceso actual",
         )
         self.restart_btn = ft.IconButton(
@@ -124,18 +122,92 @@ class BotSetupApp:
             disabled=True,
         )
 
-        # Se utiliza Tkinter para la selección de carpetas y evitar el TimeoutException de Flet
         self.page.update()
-
         self.setup_ui()
+        self._restore_last_path()
+
+    # ── Helpers ────────────────────────────────────────────────────────────
+
+    def _venv_python(self) -> Path:
+        """Ruta al ejecutable Python del entorno virtual del proyecto."""
+        base = Path(self.project_path_text.value) / ".venv"
+        return (
+            base
+            / ("Scripts" if sys.platform == "win32" else "bin")
+            / ("python.exe" if sys.platform == "win32" else "python")
+        )
+
+    def _venv_pip(self) -> Path:
+        """Ruta al ejecutable pip del entorno virtual del proyecto."""
+        base = Path(self.project_path_text.value) / ".venv"
+        return (
+            base
+            / ("Scripts" if sys.platform == "win32" else "bin")
+            / ("pip.exe" if sys.platform == "win32" else "pip")
+        )
+
+    def _build_env_content(self) -> str:
+        """Construye el contenido del archivo .env con los valores actuales."""
+        return (
+            f'TOKEN="{self.token_entry.value}"\n'
+            f'GROQ_API_KEY="{self.groq_entry.value}"\n'
+            f'VIRUSTOTAL_API_KEY="{self.vt_entry.value}"\n'
+            f'ALLOWED_GUILD_ID="{self.guild_entry.value}"'
+        )
+
+    def _validate_fields(self) -> str | None:
+        """
+        Valida los campos obligatorios.
+        Devuelve un mensaje de error si algo es inválido, o None si todo está bien.
+        """
+        if not (self.token_entry.value or "").strip():
+            return "El campo 'Discord Bot Token' es obligatorio."
+        guild = (self.guild_entry.value or "").strip()
+        if not guild:
+            return "El campo 'Allowed Guild ID' es obligatorio."
+        if not guild.isdigit():
+            return "El 'Allowed Guild ID' debe ser un número entero válido."
+        return None
+
+    def _warn_optional_fields(self):
+        """Registra advertencias si los campos opcionales pero importantes están vacíos."""
+        if not (self.groq_entry.value or "").strip():
+            self.log(
+                "⚠️  'Groq API Key' está vacía — el análisis de IA no funcionará.",
+                ft.Colors.ORANGE_400,
+            )
+        if not (self.vt_entry.value or "").strip():
+            self.log(
+                "⚠️  'VirusTotal API Key' está vacía — el análisis de URLs no funcionará.",
+                ft.Colors.ORANGE_400,
+            )
+
+    def _save_last_path(self, path: str):
+        """Persiste la última carpeta seleccionada en el directorio home del usuario."""
+        try:
+            _CONFIG_FILE.write_text(json.dumps({"last_path": path}), encoding="utf-8")
+        except Exception:
+            pass  # No crítico
+
+    def _restore_last_path(self):
+        """Restaura la última carpeta usada al iniciar la aplicación."""
+        try:
+            if _CONFIG_FILE.exists():
+                data = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+                last = data.get("last_path", "")
+                if last and Path(last).is_dir():
+                    self.project_path_text.value = last
+                    self.log(f"📁 Directorio restaurado: {last}", ft.Colors.BLUE_200)
+                    self.load_env_file(last)
+                    self.update_states()
+        except Exception:
+            pass  # No crítico
+
+    # ── UI ─────────────────────────────────────────────────────────────────
 
     def show_snackbar(self, text, color=ft.Colors.BLUE_ACCENT):
-        self.page.snack_bar = ft.SnackBar(
-            ft.Text(text),
-            bgcolor=color,
-            action="Cerrar",
-        )
-        self.page.snack_bar.open = True
+        # En Flet 0.84.0+ los SnackBars se muestran con page.show_dialog()
+        self.page.show_dialog(ft.SnackBar(content=ft.Text(text), bgcolor=color))
         self.page.update()
 
     def pick_folder(self, _):
@@ -146,14 +218,8 @@ class BotSetupApp:
             selected_path = filedialog.askdirectory()
             root.quit()
             root.destroy()
-
             if selected_path:
-
-                class MockResultEvent:
-                    def __init__(self, path):
-                        self.path = path
-
-                self.on_folder_selected(MockResultEvent(selected_path))
+                self.on_folder_selected(selected_path)
         except Exception as ex:
             self.log(f"Error al abrir el selector de archivos: {ex}", ft.Colors.RED_400)
 
@@ -161,76 +227,70 @@ class BotSetupApp:
         path = self.project_path_text.value
         if not path or not os.path.exists(path):
             return
-
         if sys.platform == "win32":
             os.startfile(path)
         elif sys.platform == "darwin":
-            subprocess.run(["open", path])
+            subprocess.run(["open", path], check=False)
         else:
-            subprocess.run(["xdg-open", path])
+            subprocess.run(["xdg-open", path], check=False)
 
     def setup_ui(self):
-        # --- Construcción del Panel Izquierdo ---
-
-        # 1. Contenedor para los inputs
-        self.settings_container = ft.Container(
-            content=ft.Column(
-                [
-                    ft.Row(
-                        [
-                            self.project_path_text,
-                            ft.IconButton(
-                                ft.Icons.FOLDER_OPEN,
-                                on_click=self.pick_folder,
-                                tooltip="Seleccionar carpeta",
-                            ),
-                            ft.IconButton(
-                                ft.Icons.OPEN_IN_NEW,
-                                on_click=self.open_in_explorer,
-                                tooltip="Abrir en Explorador",
-                            ),
-                        ]
-                    ),
-                    self.token_entry,
-                    self.groq_entry,
-                    self.vt_entry,
-                    self.guild_entry,
-                ],
-                scroll=ft.ScrollMode.AUTO,
-            ),
+        settings_column = ft.Column(
+            [
+                ft.Row(
+                    [
+                        self.project_path_text,
+                        ft.IconButton(
+                            ft.Icons.FOLDER_OPEN,
+                            on_click=self.pick_folder,
+                            tooltip="Seleccionar carpeta",
+                        ),
+                        ft.IconButton(
+                            ft.Icons.OPEN_IN_NEW,
+                            on_click=self.open_in_explorer,
+                            tooltip="Abrir en Explorador",
+                        ),
+                    ]
+                ),
+                self.token_entry,
+                self.groq_entry,
+                self.vt_entry,
+                self.guild_entry,
+            ],
+            scroll=ft.ScrollMode.AUTO,
         )
 
-        # 2. Contenedor estático para los botones
-        self.buttons_container = ft.Column(
+        buttons_column = ft.Column(
             [
                 ft.Divider(height=20),
                 ft.Row([self.status_dot, self.status_text]),
                 self.progress_bar,
                 ft.Row(
-                    [self.setup_btn, self.start_btn],
+                    [self.save_btn, self.setup_btn],
                     alignment=ft.MainAxisAlignment.CENTER,
                 ),
                 ft.Row(
-                    [
-                        self.stop_btn,
-                        self.restart_btn,
-                        self.update_btn,
-                    ],
+                    [self.start_btn, self.stop_btn],
+                    alignment=ft.MainAxisAlignment.CENTER,
+                ),
+                ft.Row(
+                    [self.restart_btn, self.update_btn],
                     alignment=ft.MainAxisAlignment.CENTER,
                 ),
             ],
             spacing=10,
         )
 
-        # Layout Principal
+        icon_widget = (
+            ft.Image(src=str(_ICON_PATH), width=30, height=30)
+            if _ICON_PATH.exists()
+            else ft.Icon(ft.Icons.TERMINAL, color=ft.Colors.BLUE_ACCENT, size=30)
+        )
+
         self.page.add(
             ft.Row(
                 [
-                    ft.Image(src="krorus.ico", width=30, height=30)
-                    if os.path.exists("krorus.ico")
-                    else ft.Icon(
-                        ft.Icons.TERMINAL, color=ft.Colors.BLUE_ACCENT, size=30
-                    ),
+                    icon_widget,
                     ft.Text("Krorus GUI", size=24, weight=ft.FontWeight.BOLD),
                 ]
             ),
@@ -251,9 +311,9 @@ class BotSetupApp:
                                         ),
                                     ]
                                 ),
-                                self.settings_container,
+                                settings_column,
                                 ft.Container(expand=True),
-                                self.buttons_container,
+                                buttons_column,
                             ],
                         ),
                         width=380,
@@ -297,12 +357,12 @@ class BotSetupApp:
             ),
         )
 
-    def on_folder_selected(self, e):
-        if e.path:
-            self.project_path_text.value = e.path
-            self.log(f"📁 Carpeta seleccionada: {e.path}", ft.Colors.BLUE_200)
-            self.load_env_file(e.path)
-            self.update_states()
+    def on_folder_selected(self, path: str):
+        self.project_path_text.value = path
+        self.log(f"📁 Carpeta seleccionada: {path}", ft.Colors.BLUE_200)
+        self._save_last_path(path)
+        self.load_env_file(path)
+        self.update_states()
 
     def load_env_file(self, folder_path):
         env_path = Path(folder_path) / ".env"
@@ -310,35 +370,35 @@ class BotSetupApp:
             return
         try:
             content = env_path.read_text(encoding="utf-8")
-            patterns = {
-                "TOKEN": r'^TOKEN\s*=\s*["\']?(.*?)["\']?$',
-                "GROQ_API_KEY": r'^GROQ_API_KEY\s*=\s*["\']?(.*?)["\']?$',
-                "VIRUSTOTAL_API_KEY": r'^VIRUSTOTAL_API_KEY\s*=\s*["\']?(.*?)["\']?$',
-                "ALLOWED_GUILD_ID": r'^ALLOWED_GUILD_ID\s*=\s*["\']?(.*?)["\']?$',
+            fields = {
+                "TOKEN": (r'^TOKEN\s*=\s*["\']?(.*?)["\']?$', self.token_entry),
+                "GROQ_API_KEY": (
+                    r'^GROQ_API_KEY\s*=\s*["\']?(.*?)["\']?$',
+                    self.groq_entry,
+                ),
+                "VIRUSTOTAL_API_KEY": (
+                    r'^VIRUSTOTAL_API_KEY\s*=\s*["\']?(.*?)["\']?$',
+                    self.vt_entry,
+                ),
+                "ALLOWED_GUILD_ID": (
+                    r'^ALLOWED_GUILD_ID\s*=\s*["\']?(.*?)["\']?$',
+                    self.guild_entry,
+                ),
             }
-            for key, pattern in patterns.items():
+            for _key, (pattern, field) in fields.items():
                 match = re.search(pattern, content, re.MULTILINE)
-                if match:
-                    val = match.group(1).strip()
-                    if key == "TOKEN" and not self.token_entry.value:
-                        self.token_entry.value = val
-                    elif key == "GROQ_API_KEY" and not self.groq_entry.value:
-                        self.groq_entry.value = val
-                    elif key == "VIRUSTOTAL_API_KEY" and not self.vt_entry.value:
-                        self.vt_entry.value = val
-                    elif key == "ALLOWED_GUILD_ID" and not self.guild_entry.value:
-                        self.guild_entry.value = val
+                if match and not field.value:
+                    field.value = match.group(1).strip()
             self.log("🔑 Valores cargados desde .env", ft.Colors.GREEN_200)
+            self.page.update()
         except Exception as e:
             self.log(f"Error al leer .env: {e}", ft.Colors.RED_400)
 
     def log(self, message, color=ft.Colors.GREY_300):
         timestamp = time.strftime("%H:%M:%S")
-
-        # Limitar cantidad de líneas para mantener rendimiento de la UI
-        if len(self.console.controls) > 300:
-            self.console.controls.pop(0)
-
+        # Eliminar 50 líneas de golpe cuando se supera el límite (más eficiente que pop(0))
+        if len(self.console.controls) > 500:
+            del self.console.controls[:50]
         self.console.controls.append(
             ft.Text(
                 f"[{timestamp}] {message}",
@@ -358,6 +418,7 @@ class BotSetupApp:
         has_project = bool(self.project_path_text.value)
         is_running = self.is_process_running()
 
+        self.save_btn.disabled = self.is_busy or not has_project
         self.setup_btn.disabled = self.is_busy or is_running or not has_project
         self.start_btn.disabled = self.is_busy or is_running or not has_project
         self.stop_btn.disabled = self.is_busy or not is_running
@@ -397,6 +458,8 @@ class BotSetupApp:
                     stdout=subprocess.PIPE,
                     stderr=subprocess.STDOUT,
                     text=True,
+                    encoding="utf-8",
+                    errors="replace",
                     cwd=cwd,
                     env=env,
                     bufsize=1,
@@ -404,21 +467,14 @@ class BotSetupApp:
                 )
                 with self.process_lock:
                     self.running_process = process
-
                 self.update_states()
 
-                # Leemos línea por línea
-                while True:
-                    line = process.stdout.readline()
-                    if not line and process.poll() is not None:
-                        break
-                    if line:
-                        self.log(line.strip())
-                        # Pausa mínima para asegurar que el thread ceda el control y el bridge de Flet
-                        # procese los mensajes de actualización de la consola fluidamente.
-                        time.sleep(0.01)
-
-                process.stdout.close()
+                if process.stdout:
+                    for line in process.stdout:
+                        line = line.rstrip()
+                        if line:
+                            self.log(line)
+                    process.stdout.close()
                 rc = process.wait()
                 with self.process_lock:
                     self.running_process = None
@@ -433,24 +489,44 @@ class BotSetupApp:
 
         threading.Thread(target=target, daemon=True).start()
 
+    # ── Acciones ───────────────────────────────────────────────────────────
+
+    def save_env(self, _):
+        """Guarda las credenciales en .env sin reinstalar dependencias."""
+        if not self.project_path_text.value:
+            return
+        err = self._validate_fields()
+        if err:
+            self.show_snackbar(f"⚠️ {err}", ft.Colors.ORANGE_800)
+            return
+        self._warn_optional_fields()
+        env_path = Path(self.project_path_text.value) / ".env"
+        try:
+            env_path.write_text(self._build_env_content(), encoding="utf-8")
+            self.log("✅ Credenciales guardadas en .env", ft.Colors.GREEN_200)
+            self.show_snackbar("Credenciales guardadas", ft.Colors.GREEN_700)
+        except Exception as e:
+            self.log(f"❌ Error al guardar .env: {e}", ft.Colors.RED_400)
+
     def start_setup(self, _):
         if not self.project_path_text.value:
             return
+        err = self._validate_fields()
+        if err:
+            self.show_snackbar(f"⚠️ {err}", ft.Colors.ORANGE_800)
+            return
+
         self.is_busy = True
         self.progress_bar.visible = True
         self.clear_console(None)
         self.log("🚀 Iniciando configuración...", ft.Colors.BLUE_200)
         self.update_states()
 
+        self._warn_optional_fields()
+
         env_path = Path(self.project_path_text.value) / ".env"
-        env_content = (
-            f'TOKEN="{self.token_entry.value}"\n'
-            f'GROQ_API_KEY="{self.groq_entry.value}"\n'
-            f'VIRUSTOTAL_API_KEY="{self.vt_entry.value}"\n'
-            f'ALLOWED_GUILD_ID="{self.guild_entry.value}"'
-        )
         try:
-            env_path.write_text(env_content, encoding="utf-8")
+            env_path.write_text(self._build_env_content(), encoding="utf-8")
             self.log("✅ Archivo .env guardado", ft.Colors.GREEN_200)
         except Exception as e:
             self.log(f"❌ Error al guardar .env: {e}", ft.Colors.RED_400)
@@ -459,28 +535,23 @@ class BotSetupApp:
             self.update_states()
             return
 
-        python_exe = sys.executable
         venv_dir = Path(self.project_path_text.value) / ".venv"
         self.log("🐍 Creando/Verificando entorno virtual...", ft.Colors.BLUE_200)
         self.run_command(
-            [python_exe, "-m", "venv", str(venv_dir)],
+            [sys.executable, "-m", "venv", str(venv_dir)],
             cwd=self.project_path_text.value,
-            on_finish=lambda rc: self.after_venv(rc, venv_dir),
+            on_finish=self.after_venv,
         )
 
-    def after_venv(self, rc, venv_dir):
+    def after_venv(self, rc):
         if rc != 0:
             self.log("❌ Error al crear entorno virtual", ft.Colors.RED_400)
             self.is_busy = False
+            self.progress_bar.visible = False
             self.update_states()
             return
 
-        pip_exe = (
-            venv_dir
-            / ("Scripts" if sys.platform == "win32" else "bin")
-            / ("pip.exe" if sys.platform == "win32" else "pip")
-        )
-
+        pip_exe = self._venv_pip()
         req_file = Path(self.project_path_text.value) / "requirements.txt"
         if req_file.exists():
             self.log("📦 Instalando dependencias...", ft.Colors.BLUE_200)
@@ -507,14 +578,8 @@ class BotSetupApp:
         if self.is_process_running():
             return
 
-        project_dir = Path(self.project_path_text.value)
-        venv_path = project_dir / ".venv"
-        python_bin = (
-            venv_path
-            / ("Scripts" if sys.platform == "win32" else "bin")
-            / ("python.exe" if sys.platform == "win32" else "python")
-        )
-        main_file = project_dir / "main.py"
+        python_bin = self._venv_python()
+        main_file = Path(self.project_path_text.value) / "main.py"
 
         if not main_file.exists():
             self.log(
@@ -541,8 +606,10 @@ class BotSetupApp:
         )
 
     def on_bot_exit(self, rc):
-        if self._restart_requested:
+        with self._restart_lock:
+            restart = self._restart_requested
             self._restart_requested = False
+        if restart:
             # Pequeño retardo para asegurar que el proceso anterior se libere
             time.sleep(0.5)
             self.start_bot(None)
@@ -552,21 +619,27 @@ class BotSetupApp:
         self.update_states()
 
     def stop_bot(self):
+        """Detiene el proceso del bot. El subprocess de taskkill se ejecuta fuera del lock."""
+        pid = None
         with self.process_lock:
             if self.running_process:
                 self.log("🛑 Solicitando detención...", ft.Colors.ORANGE_400)
-                if sys.platform == "win32":
-                    subprocess.run(
-                        ["taskkill", "/F", "/T", "/PID", str(self.running_process.pid)],
-                        capture_output=True,
-                        creationflags=CREATE_NO_WINDOW,
-                    )
-                else:
+                pid = self.running_process.pid
+                if sys.platform != "win32":
                     self.running_process.terminate()
+
+        # Ejecutar taskkill fuera del lock para no bloquearlo
+        if pid and sys.platform == "win32":
+            subprocess.run(
+                ["taskkill", "/F", "/T", "/PID", str(pid)],
+                capture_output=True,
+                creationflags=CREATE_NO_WINDOW,
+            )
         self.update_states()
 
     def restart_bot(self, _):
-        self._restart_requested = True
+        with self._restart_lock:
+            self._restart_requested = True
         self.stop_bot()
 
     def check_for_updates(self, _):
@@ -577,9 +650,8 @@ class BotSetupApp:
         )
 
         def update():
+            repo_path = self.project_path_text.value
             try:
-                repo_path = self.project_path_text.value
-                # Sincronizar
                 subprocess.run(
                     ["git", "fetch"],
                     cwd=repo_path,
@@ -587,12 +659,12 @@ class BotSetupApp:
                     creationflags=CREATE_NO_WINDOW,
                 )
 
-                # Verificar cambios
                 res = subprocess.run(
                     ["git", "rev-list", "--count", "HEAD..@{u}"],
                     cwd=repo_path,
                     capture_output=True,
                     text=True,
+                    encoding="utf-8",
                     creationflags=CREATE_NO_WINDOW,
                 )
                 count = int(res.stdout.strip() or 0)
@@ -607,9 +679,9 @@ class BotSetupApp:
                         cwd=repo_path,
                         capture_output=True,
                         text=True,
+                        encoding="utf-8",
                         creationflags=CREATE_NO_WINDOW,
                     )
-
                     if pull_res.returncode == 0:
                         self.log(
                             "✅ Código actualizado con éxito.", ft.Colors.GREEN_400
@@ -618,25 +690,30 @@ class BotSetupApp:
                             "Proyecto actualizado via Git", ft.Colors.BLUE_800
                         )
 
-                        # Re-instalar dependencias por si cambiaron
-                        venv_dir = Path(repo_path) / ".venv"
+                        pip_exe = self._venv_pip()
                         req_file = Path(repo_path) / "requirements.txt"
-                        if venv_dir.exists() and req_file.exists():
+                        if pip_exe.exists() and req_file.exists():
                             self.log(
                                 "📦 Verificando nuevas dependencias...",
                                 ft.Colors.BLUE_200,
                             )
-                            pip_exe = (
-                                venv_dir
-                                / ("Scripts" if sys.platform == "win32" else "bin")
-                                / ("pip.exe" if sys.platform == "win32" else "pip")
-                            )
-                            subprocess.run(
+                            proc = subprocess.Popen(
                                 [str(pip_exe), "install", "-r", str(req_file)],
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT,
+                                text=True,
+                                encoding="utf-8",
+                                errors="replace",
                                 cwd=repo_path,
-                                capture_output=True,
                                 creationflags=CREATE_NO_WINDOW,
                             )
+                            if proc.stdout:
+                                for line in proc.stdout:
+                                    line = line.rstrip()
+                                    if line:
+                                        self.log(line)
+                                proc.stdout.close()
+                            proc.wait()
                             self.log("✅ Dependencias al día.", ft.Colors.GREEN_200)
                     else:
                         self.log(
