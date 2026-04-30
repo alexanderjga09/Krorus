@@ -74,11 +74,11 @@ class Message:
 
         print(f"[DEBUG] URL: {url} | Dominio extraído: {domain}")
 
-        gif_domains = self._load_json_list("whitelist.json")
+        whitelist_domains = self._load_json_list("whitelist.json")
         alert_domains = self._load_json_list("alert_domains.json")
 
         # 1. Si está en whitelist → omitir
-        if self._domain_matches(domain, gif_domains):
+        if self._domain_matches(domain, whitelist_domains):
             print(f"[INFO] Dominio {domain} en whitelist -> omitido")
             return False, domain, url
 
@@ -189,17 +189,23 @@ class Message:
                 "",
                 "❌ Formato no soportado",
                 f"No se pudo transcribir: tipo {audio_attachment.content_type}",
+                None,
             )
 
         try:
-            audio_bytes = await audio_attachment.read()
-            audio_file = io.BytesIO(audio_bytes)
-            audio_file.name = audio_attachment.filename
+            audio_data = await audio_attachment.read()
+            audio_buffer = io.BytesIO(audio_data)
+            audio_buffer.name = audio_attachment.filename
 
             transcription = await GROQ_CLIENT.audio.transcriptions.create(
-                file=audio_file,
+                file=audio_buffer,
                 model="whisper-large-v3-turbo",
                 response_format="text",
+            )
+
+            # Creamos el objeto discord.File para el retorno
+            audio_file = discord.File(
+                io.BytesIO(audio_data), filename=audio_attachment.filename
             )
 
             reference = (
@@ -211,6 +217,7 @@ class Message:
                 "",
                 "📝 Transcripción de audio",
                 f"{reference}\n**Contenido:**\n```{transcription}```",
+                audio_file,
             )
         except Exception as e:
             print(f"[ERROR] Transcripción fallida: {e}")
@@ -218,6 +225,7 @@ class Message:
                 "",
                 "❌ Error de transcripción",
                 f"No se pudo transcribir: {str(e)}",
+                None,
             )
 
     async def Misconduct(self, groq_client):
@@ -283,7 +291,9 @@ class Message:
 
         return await _call_groq()
 
-    async def _ref_message(self, role_id, GROQ_CLIENT):
+    async def _ref_message(
+        self, role_id, GROQ_CLIENT, vt_api_key, session, member: discord.Member = None
+    ):
         print(
             f"[REF] _ref_message llamado para msg {self.msg.id} con referencia a {self.msg.reference.message_id if self.msg.reference else 'None'}"
         )
@@ -335,6 +345,47 @@ class Message:
             else:
                 print("[DEBUG _ref] El adjunto NO es audio")
 
+            if att.content_type and att.content_type.startswith(
+                ("image/", "video/", "file/")
+            ):
+                file_discord = await att.to_file()
+
+                match re.match(r"^(\w+)/", att.content_type).group(1):
+                    case "image":
+                        tipo = "Imagen"
+                    case "video":
+                        tipo = "Video"
+                    case "file":
+                        tipo = "Archivo"
+
+                reference = (
+                    f"Mandado a: {member.mention}"
+                    if self.msg.author.id != member.id
+                    else ""
+                )
+
+                return (
+                    "",
+                    f"📁 {tipo} detectado",
+                    f"{reference}\n_ _\n**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB\n_ _",
+                    file_discord,
+                )
+
+        is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
+        if is_suspecious:
+            reference = (
+                f"Mandado a: {member.mention}"
+                if self.msg.author.id != member.id
+                else ""
+            )
+
+            return (
+                "",
+                "⚠️ Enlace Sospechoso",
+                f"{reference}\n**Dominio:** {domain}\n**URL:** {url}",
+                None,
+            )
+
         # Si no había audio en la respuesta, seguir con misconduct sobre el texto
         print("[DEBUG _ref] Evaluando misconduct en el texto de la respuesta...")
         misconduct = await self.Misconduct(GROQ_CLIENT)
@@ -350,15 +401,23 @@ class Message:
                     "Msg INA. [to {}]".format(ref_message.author.mention),
                     self.msg.jump_url,
                 )
+
+                reference = (
+                    f"Mandado a: {member.mention}"
+                    if self.msg.author.id != member.id
+                    else ""
+                )
+
             return (
                 code,
                 "❗ Mensaje inapropiado",
-                f"Dicho a: {ref_message.author.mention}\n**Contenido:**\n```{self.msg.content}```",
+                f"{reference}\n**Contenido:**\n```{self.msg.content}```",
+                None,
             )
         else:
             print("[DEBUG _ref] No se detectó misconduct")
 
-    async def _mention_user(self, ids, role_id, GROQ_CLIENT):
+    async def _mention_user(self, ids, role_id, GROQ_CLIENT, vt_api_key, session):
         # Filtramos IDs no válidos (miembros que no están en el servidor)
         members = [
             m
@@ -368,29 +427,62 @@ class Message:
             if m is not None
         ]
 
-        for member in members:
-            if any(map(lambda r: r.id == role_id, member.roles)):
-                misconduct = await self.Misconduct(GROQ_CLIENT)
-                if misconduct:
-                    code = generate_code()
-                    # CORRECCIÓN: Verificar si el autor del mensaje (el que menciona) tiene el rol protegido
-                    if not discord.utils.get(self.msg.author.roles, id=role_id):
-                        chain_log = ChainLog(
-                            str(
-                                Path(__file__).parent.parent.parent
-                                / "data"
-                                / "logs.json"
-                            )
-                        )
-                        chain_log.add_alert(
-                            str(self.msg.author.id),
-                            code,
-                            "Msg INA. [mentions to ...]",
-                            self.msg.jump_url,
-                        )
+        # Comprobamos si alguno de los mencionados tiene el rol protegido
+        protected_mentions = [
+            m for m in members if any(r.id == role_id for r in m.roles)
+        ]
+
+        if protected_mentions:
+            if self.msg.attachments:
+                att = self.msg.attachments[0]
+                if att.content_type and att.content_type.startswith(
+                    ("image/", "video/", "file/")
+                ):
+                    file_discord = await att.to_file()
+
+                    match re.match(r"^(\w+)/", att.content_type).group(1):
+                        case "image":
+                            tipo = "Imagen"
+                        case "video":
+                            tipo = "Video"
+                        case "file":
+                            tipo = "Archivo"
 
                     return (
-                        code,
-                        "❗ Mensaje inapropiado",
-                        f"Protegidos: {', '.join([m.mention for m in members if discord.utils.get(m.roles, id=role_id)])}\n**Contenido:**\n```{self.msg.content}```",
+                        "",
+                        f"📁 {tipo} detectado",
+                        f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n_ _\n**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB\n_ _",
+                        file_discord,
                     )
+
+            # 1. Análisis de URL
+            is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
+            if is_suspecious:
+                return (
+                    "",
+                    "⚠️ Enlace Sospechoso",
+                    f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Dominio:** {domain}\n**URL:** {url}",
+                    None,
+                )
+
+            # 2. Análisis de Misconduct
+            misconduct = await self.Misconduct(GROQ_CLIENT)
+            if misconduct:
+                code = generate_code()
+                if not discord.utils.get(self.msg.author.roles, id=role_id):
+                    chain_log = ChainLog(
+                        str(Path(__file__).parent.parent.parent / "data" / "logs.json")
+                    )
+                    chain_log.add_alert(
+                        str(self.msg.author.id),
+                        code,
+                        "Msg INA. [mentions to ...]",
+                        self.msg.jump_url,
+                    )
+
+                return (
+                    code,
+                    "❗ Mensaje inapropiado",
+                    f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Contenido:**\n```{self.msg.content}```",
+                    None,
+                )

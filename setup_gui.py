@@ -144,6 +144,7 @@ class BotSetupApp:
             root.withdraw()
             root.attributes("-topmost", True)
             selected_path = filedialog.askdirectory()
+            root.quit()
             root.destroy()
 
             if selected_path:
@@ -302,7 +303,6 @@ class BotSetupApp:
             self.log(f"📁 Carpeta seleccionada: {e.path}", ft.Colors.BLUE_200)
             self.load_env_file(e.path)
             self.update_states()
-            self.page.update()
 
     def load_env_file(self, folder_path):
         env_path = Path(folder_path) / ".env"
@@ -334,16 +334,25 @@ class BotSetupApp:
 
     def log(self, message, color=ft.Colors.GREY_300):
         timestamp = time.strftime("%H:%M:%S")
+
+        # Limitar cantidad de líneas para mantener rendimiento de la UI
+        if len(self.console.controls) > 300:
+            self.console.controls.pop(0)
+
         self.console.controls.append(
             ft.Text(
-                f"[{timestamp}] {message}", color=color, font_family="Consolas", size=13
+                f"[{timestamp}] {message}",
+                color=color,
+                font_family="Consolas",
+                size=13,
+                selectable=True,
             )
         )
-        self.page.update()
+        self.console.update()
 
     def clear_console(self, _):
         self.console.controls.clear()
-        self.page.update()
+        self.console.update()
 
     def update_states(self):
         has_project = bool(self.project_path_text.value)
@@ -395,14 +404,25 @@ class BotSetupApp:
                 )
                 with self.process_lock:
                     self.running_process = process
+
                 self.update_states()
-                for line in iter(process.stdout.readline, ""):
+
+                # Leemos línea por línea
+                while True:
+                    line = process.stdout.readline()
+                    if not line and process.poll() is not None:
+                        break
                     if line:
                         self.log(line.strip())
+                        # Pausa mínima para asegurar que el thread ceda el control y el bridge de Flet
+                        # procese los mensajes de actualización de la consola fluidamente.
+                        time.sleep(0.01)
+
                 process.stdout.close()
                 rc = process.wait()
                 with self.process_lock:
                     self.running_process = None
+
                 if on_finish:
                     on_finish(rc)
                 self.update_states()
@@ -523,6 +543,8 @@ class BotSetupApp:
     def on_bot_exit(self, rc):
         if self._restart_requested:
             self._restart_requested = False
+            # Pequeño retardo para asegurar que el proceso anterior se libere
+            time.sleep(0.5)
             self.start_bot(None)
         else:
             self.log(f"⏹️ Bot detenido (Código: {rc})", ft.Colors.ORANGE_400)

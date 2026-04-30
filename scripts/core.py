@@ -76,7 +76,7 @@ class Krorus(commands.Bot):
         else:
             print(f"✅ Bot añadido a servidor autorizado: {guild.name}")
 
-    async def _send_alert(self, message_or_text, code, title, details):
+    async def _send_alert(self, message_or_text, code, title, details, file=None):
         """
         Envía una alerta al canal de staff.
         Acepta un objeto discord.Message, una cadena de texto (para alertas sin mensaje, como canales de voz)
@@ -108,21 +108,21 @@ class Krorus(commands.Bot):
                         value=f"{details}\n{jump_url}",
                         inline=False,
                     )
-                    await staff_channel.send(code_str, embed=embed)
+                    await staff_channel.send(code_str, embed=embed, file=file)
                 else:
                     embed.add_field(name="", value=jump_url, inline=False)
                     await staff_channel.send(code_str, embed=embed)
-                    await staff_channel.send(details)
+                    await staff_channel.send(details, file=file)
             except AttributeError:
                 embed.add_field(name="Detalles", value=details, inline=False)
-                await staff_channel.send(code_str, embed=embed)
+                await staff_channel.send(code_str, embed=embed, file=file)
         else:
             # Alerta sin mensaje (p.ej. supervisión de voz)
             if message_or_text:
                 embed.description = str(message_or_text)
             code_str = f"**Code:** {code}" if code else ""
             embed.add_field(name="Detalles", value=details, inline=False)
-            await staff_channel.send(code_str, embed=embed)
+            await staff_channel.send(code_str, embed=embed, file=file)
 
     async def on_message(self, message):
         if message.author.bot:
@@ -142,21 +142,39 @@ class Krorus(commands.Bot):
 
         # 1. Respuesta a un mensaje de usuario protegido
         if message.reference:
-            msg = Message(message)
-            result = await msg._ref_message(PROTECTED_ROLE_ID, GROQ_CLIENT)
-            if result is not None:
-                code, alert, details = result
-                await self._send_alert(message, code, alert, details)
-            return
+            async with aiohttp.ClientSession() as session:
+                vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
+
+                ref_message = await message.channel.fetch_message(
+                    message.reference.message_id
+                )
+
+                msg = Message(message)
+                result = await msg._ref_message(
+                    PROTECTED_ROLE_ID,
+                    GROQ_CLIENT,
+                    vt_api_key,
+                    session,
+                    ref_message.author,
+                )
+                if result is not None:
+                    code, alert, details, file = result
+                    await self._send_alert(message, code, alert, details, file)
+                return
 
         # 2. Menciones a usuarios protegidos
         if ids := re.findall(r"<@!?(\d+)>", message.content):
-            msg = Message(message)
-            result = await msg._mention_user(ids, PROTECTED_ROLE_ID, GROQ_CLIENT)
-            if result is not None:
-                code, alert, details = result
-                await self._send_alert(message, code, alert, details)
-            return
+            async with aiohttp.ClientSession() as session:
+                vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
+
+                msg = Message(message)
+                result = await msg._mention_user(
+                    ids, PROTECTED_ROLE_ID, GROQ_CLIENT, vt_api_key, session
+                )
+                if result is not None:
+                    code, alert, details, file = result
+                    await self._send_alert(message, code, alert, details, file)
+                return
 
         # 3. A partir de aquí, solo se procesa si el autor es un usuario protegido
         member = message.author
@@ -168,11 +186,16 @@ class Krorus(commands.Bot):
         if not discord.utils.get(member.roles, id=PROTECTED_ROLE_ID):
             return
 
-        # Ahora sí ignoramos mensajes demasiado cortos (pero no si tiene adjuntos de audio)
+        # Ahora sí ignoramos mensajes demasiado cortos (pero no si tiene adjuntos multimedia)
         if len(message.content) <= 2 and not (
             message.attachments
             and message.attachments[0].content_type
-            and message.attachments[0].content_type.startswith("audio/")
+            and (
+                message.attachments[0].content_type.startswith("audio/")
+                or message.attachments[0].content_type.startswith("image/")
+                or message.attachments[0].content_type.startswith("video/")
+                or message.attachments[0].content_type.startswith("file/")
+            )
         ):
             return
 
@@ -202,15 +225,40 @@ class Krorus(commands.Bot):
                 f"**Contenido:**\n```{message.content}```",
             )
 
-        # Transcripción de audio (si hay adjuntos de voz)
+        # Manejo de archivos adjuntos (Audio, Imagen, Video)
         if message.attachments:
-            att = message.attachments[0]
-            if att.content_type and att.content_type.startswith("audio/"):
-                result = await msg.transcribe_audio(GROQ_CLIENT, message.author)
-                if result:
-                    code, title, details = result
-                    await self._send_alert(message, code, title, details)
-                return
+            for att in message.attachments:
+                if not att.content_type:
+                    continue
+
+                # Transcripción de audio (si es adjunto de voz/audio)
+                if att.content_type.startswith("audio/"):
+                    result = await msg.transcribe_audio(GROQ_CLIENT, message.author)
+                    if result:
+                        code, title, details, audio_file = result
+                        await self._send_alert(
+                            message, code, title, details, file=audio_file
+                        )
+
+                elif att.content_type.startswith(("image/", "video/", "file/")):
+                    file_discord = await att.to_file()
+
+                    match re.match(r"^(\w+)/", att.content_type).group(1):
+                        case "image":
+                            tipo = "Imagen"
+                        case "video":
+                            tipo = "Video"
+                        case "file":
+                            tipo = "Archivo"
+
+                    await self._send_alert(
+                        message,
+                        "",
+                        f"📁 {tipo} detectado",
+                        f"**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB",
+                        file=file_discord,
+                    )
+            return
 
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
         if after.author.bot:
