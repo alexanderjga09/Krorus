@@ -1,27 +1,27 @@
-# Instalar
+# Cómo instalar Krorus
 
-## Necesitas los siguientes requisitos:
+## Requisitos previos:
 - 🐍 **Python** 3.13.9 [Ir a Descargar](https://www.python.org/downloads/release/python-3139/)
 - 💠 **Git** [Ir a Descargar](https://git-scm.com/install/windows)
 
 ### Pasos a seguir:
 
-1. Abriendo **PowerShell** o **Git Bash** (No Administrador) tienes que utilizar el siguiente comando, lo que hará es un clon del proyecto que estará conectado con la rama principal (Se hace así para puedas obtener las actualización)
+1. Abre **PowerShell** o **Git Bash** (sin permisos de administrador) y utiliza el siguiente comando. Esto clonará el proyecto y lo mantendrá conectado a la rama principal para que puedas recibir futuras actualizaciones:
 ```bash
 git clone https://github.com/alexanderjga09/Krorus.git
 ```
 
-2. Ya dentro proyecto tienes que ejecutar el **start.bat**, lo que hará es chequear sí tienes el Python, pip y la librería **Flet** instala, esa ultima sí no lo está la instalará automaticamente
+2. Una vez dentro de la carpeta del proyecto, ejecuta el archivo **start.bat**. Este verificará si tienes instalados Python, pip y la librería **Flet**; si esta última no está presente, se instalará automáticamente.
 
-3. Cuando haya cargado la interfaz grafica del bot, tienes que cargar la carpeta del proyecto y luego rellenar los siguientes campos
-  - **Discord Bot Token:** Se obtiene en la pagina [Discord Portal Developer](https://discord.com/developers/home), Tiene acceder en con tu cuenta de Discord e ir a la sección **Aplicaciones** y al boton que dice **Nueva Aplicacion**, una vez la creas te mostra a primera instancia la informacion general de la aplicacion pero donde nos interesa es la seccion **Bot**, Ahi se puede encontrar el **Token** que estamos buscando, para colocar el bot en servidor tiene que ir la sección **OAuth2**, En **OAuth2 URL Generator** tienes que marcar las casillas **bot** y **applications.commands**, En permisos es recomendable que simplemente se seleccione **Administrador** pero si sabes respecto del tema puedes seleccionarlas necesarias y nada más, al final de te generará un link que puedes usar en el navegador de tu preferencia para comenzar el proceso de agregar el bot al servidor.
+3. Cuando se haya cargado la interfaz gráfica del bot, selecciona la carpeta del proyecto y rellena los siguientes campos:
+  - **Discord Bot Token:** Se obtiene en el [Discord Developer Portal](https://discord.com/developers/home). Debes acceder con tu cuenta de Discord, ir a la sección **Applications** y pulsar el botón **New Application**. Una vez creada, en la sección **Bot** encontrarás el **Token**. Para añadir el bot a un servidor, ve a la sección **OAuth2** -> **URL Generator**, marca las casillas **bot** y **applications.commands**. En permisos, se recomienda seleccionar **Administrator**. Al final se generará un enlace que puedes usar en tu navegador para invitar al bot al servidor.
 
-  - **Groq API Key:** Es la IA que usa el bot en sus funciones más relevantes, para obtener la API de Groq solo tiene que ir a su pagina ([Ir a la pagina de Groq](https://console.groq.com/home)), crearte una cuenta, generar la API y la copias, el plan gratis tiene un limite de 1000 llamadas a la API por dia (los que serian los mensajes/audios), Sí el server tiene mucho trafico, se recomienda las opciones de pago que tenie la plataforma Groq.
+  - **Groq API Key:** Es la IA que usa el bot para sus funciones principales. Para obtenerla, ve a su [página oficial](https://console.groq.com/home), crea una cuenta y genera la API Key. El plan gratuito tiene un límite de 1000 llamadas diarias (mensajes/audios). Si el servidor tiene mucho tráfico, se recomiendan las opciones de pago de Groq.
 
-  - **VirusTotal API Key:** Está API solamente se le da uso cuando un link que no se encuentra ni en la lista **alert_domains** ni en la lista **whitelist** y sí ese es compartido por un **Protegido** o alguien se lo envia respondiendole o etiquetalos a uno o varios **Protegidos** procederá ha hacer un analisis del link. [Ir a la pagina de VirusTotal](https://www.virustotal.com/gui/my-apikey)
+  - **VirusTotal API Key:** Esta API solo se utiliza cuando se comparte un enlace que no está en las listas **alert_domains** ni **whitelist**, siempre que sea enviado por un **Protegido** o alguien le responda/etiquete con dicho enlace. En ese caso, se procederá a realizar un análisis del link. [Ir a la página de VirusTotal](https://www.virustotal.com/gui/my-apikey)
 
-  - **Allowed Guild ID:** Ahí tienes que colocar la ID del servidor donde se va a establecer el bot, Ya colocado eso correctamente el mismo no admitira la entranda o quedar en un server que no coincida con la ID que colocaste.
+  - **Allowed Guild ID:** Aquí debes colocar la ID del servidor donde se establecerá el bot. Una vez configurado, el bot no admitirá la entrada ni permanecerá en ningún servidor que no coincida con esta ID.
 
-4. Ya cuando hayan llenado todo los campos, solo te queda a darle a **Configurar**, lo que hará que instalar y acomodar todo para que luego de un rato de espera ya funcione bot. 💞
+4. Cuando hayas llenado todos los campos, haz clic en **Configurar**. El programa instalará y preparará todo lo necesario para que, tras un breve momento, el bot comience a funcionar. 💞
 
-5. El Bot ya funcionando y en el server correcto, solo tienes que usar el comando **/set-data**, colocarás el canal donde se enviaran todas las alertas y el rol de Protegido. ✅
+5. Con el bot funcionando en el servidor correcto, utiliza el comando **/set-data** para configurar el canal donde se enviarán las alertas y asignar el rol de Protegido. ✅
