@@ -445,73 +445,82 @@ class Message:
         else:
             logger.debug("[DEBUG _ref] No se detectó misconduct")
 
-    async def _mention_user(self, ids, role_id, GROQ_CLIENT, vt_api_key, session):
-        # Filtramos IDs no válidos (miembros que no están en el servidor)
-        members = [
-            m
-            for m in (
-                discord.utils.get(self.msg.guild.members, id=int(mid)) for mid in ids
-            )
-            if m is not None
-        ]
-
-        # Comprobamos si alguno de los mencionados tiene el rol protegido
+    async def _mention_user(
+        self, mentioned_users, role_id, GROQ_CLIENT, vt_api_key, session
+    ):
+        """
+        Recibe la lista de objetos User/Member ya resuelta por Discord (message.mentions).
+        Filtra los que tienen el rol protegido y comprueba el contenido del mensaje.
+        """
+        # Comprobamos si alguno de los mencionados tiene el rol protegido.
+        # Usamos getattr para tolerar objetos User que no tienen .roles (fuera del guild).
         protected_mentions = [
-            m for m in members if any(r.id == role_id for r in m.roles)
+            m
+            for m in mentioned_users
+            if m.id != self.msg.author.id  # ignorar auto-menciones
+            and any(r.id == role_id for r in getattr(m, "roles", []))
         ]
 
-        if protected_mentions:
-            if self.msg.attachments:
-                att = self.msg.attachments[0]
-                if att.content_type and att.content_type.startswith(
-                    ("image/", "video/", "file/")
-                ):
-                    file_discord = await att.to_file()
+        logger.info(
+            f"[MENTION] Protegidos mencionados: {[str(m) for m in protected_mentions] or 'ninguno'}"
+        )
 
-                    m = re.match(r"^(\w+)/", att.content_type)
-                    tipo = "Archivo"
-                    if m:
-                        kind = m.group(1)
-                        if kind == "image":
-                            tipo = "Imagen"
-                        elif kind == "video":
-                            tipo = "Video"
+        if not protected_mentions:
+            return
 
-                    return (
-                        "",
-                        f"📁 {tipo} detectado",
-                        f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n_ _\n**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB\n_ _",
-                        file_discord,
-                    )
-
-            # 1. Análisis de URL
-            is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
-            if is_suspecious:
+        if self.msg.attachments:
+            att = self.msg.attachments[0]
+            if att.content_type and att.content_type.startswith(
+                ("image/", "video/", "file/")
+            ):
+                file_discord = await att.to_file()
+                m = re.match(r"^(\w+)/", att.content_type)
+                tipo = "Archivo"
+                if m:
+                    kind = m.group(1)
+                    if kind == "image":
+                        tipo = "Imagen"
+                    elif kind == "video":
+                        tipo = "Video"
                 return (
                     "",
-                    "⚠️ Enlace Sospechoso",
-                    f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Dominio:** {domain}\n**URL:** {url}",
-                    None,
+                    f"📁 {tipo} detectado",
+                    f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n_ _\n**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB\n_ _",
+                    file_discord,
                 )
 
-            # 2. Análisis de Misconduct
-            misconduct = await self.Misconduct(GROQ_CLIENT)
-            if misconduct:
-                code = generate_code()
-                if not discord.utils.get(self.msg.author.roles, id=role_id):
-                    chain_log = ChainLog(
-                        str(Path(__file__).parent.parent.parent / "data" / "logs.json")
-                    )
-                    chain_log.add_alert(
-                        str(self.msg.author.id),
-                        code,
-                        "Msg INA. [mentions to ...]",
-                        self.msg.jump_url,
-                    )
+        # 1. Análisis de URL
+        is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
+        if is_suspecious:
+            return (
+                "",
+                "⚠️ Enlace Sospechoso",
+                f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Dominio:** {domain}\n**URL:** {url}",
+                None,
+            )
 
-                return (
+        # 2. Análisis de Misconduct
+        logger.info(
+            f"[MENTION] Analizando misconduct de {self.msg.author} "
+            f"hacia protegidos: {[str(m) for m in protected_mentions]}"
+        )
+        misconduct = await self.Misconduct(GROQ_CLIENT)
+        logger.info(f"[MENTION] Resultado misconduct: {misconduct}")
+        if misconduct:
+            code = generate_code()
+            if not discord.utils.get(self.msg.author.roles, id=role_id):
+                chain_log = ChainLog(
+                    str(Path(__file__).parent.parent.parent / "data" / "logs.json")
+                )
+                chain_log.add_alert(
+                    str(self.msg.author.id),
                     code,
-                    "❗ Mensaje inapropiado",
-                    f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Contenido:**\n```{self.msg.content}```",
-                    None,
+                    "Msg INA. [mentions to ...]",
+                    self.msg.jump_url,
                 )
+            return (
+                code,
+                "❗ Mensaje inapropiado",
+                f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Contenido:**\n```{self.msg.content}```",
+                None,
+            )

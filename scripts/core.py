@@ -199,6 +199,9 @@ class Krorus(commands.Bot):
 
         # 1. Respuesta a un mensaje de usuario protegido
         if message.reference:
+            logger.info(
+                f"[REF] {message.author} responde al mensaje {message.reference.message_id}"
+            )
             async with self._get_session() as session:
                 vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
                 msg = Message(message)
@@ -214,12 +217,22 @@ class Krorus(commands.Bot):
             return
 
         # 2. Menciones a usuarios protegidos
-        if ids := re.findall(r"<@!?(\d+)>", message.content):
+        # Usamos message.mentions (resuelto por Discord) en lugar de regex + búsqueda en caché,
+        # para evitar que el miembro no esté en la caché y la comprobación falle silenciosamente.
+        if message.mentions:
+            logger.info(
+                f"[MENTION] {message.author} menciona a: "
+                f"{[str(m) for m in message.mentions]}"
+            )
             async with self._get_session() as session:
                 vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
                 msg = Message(message)
                 result = await msg._mention_user(
-                    ids, PROTECTED_ROLE_ID, GROQ_CLIENT, vt_api_key, session
+                    message.mentions,
+                    PROTECTED_ROLE_ID,
+                    GROQ_CLIENT,
+                    vt_api_key,
+                    session,
                 )
                 if result is not None:
                     code, alert, details, file = result
@@ -319,18 +332,43 @@ class Krorus(commands.Bot):
         if not after.guild or after.guild.id != self.allowed_guild_id:
             return
 
-        # Solo alertar si el autor tiene el rol protegido
-        member = after.guild.get_member(after.author.id)
-        if not member or not discord.utils.get(member.roles, id=PROTECTED_ROLE_ID):
+        if before.content == after.content:
             return
 
-        if before.content != after.content:
-            await self._send_alert(
-                after,
-                "",
-                "📝 Mensaje editado",
-                f"**Antes:**\n```{before.content[:950]}```\n**Después:**\n```{after.content[:950]}```",
-            )
+        member = after.guild.get_member(after.author.id)
+        if not member:
+            return
+
+        # Caso 1: el autor del mensaje editado tiene el rol protegido
+        author_is_protected = bool(
+            discord.utils.get(member.roles, id=PROTECTED_ROLE_ID)
+        )
+
+        # Caso 2: el mensaje editado menciona a un usuario protegido
+        mentions_protected = any(
+            discord.utils.get(getattr(m, "roles", []), id=PROTECTED_ROLE_ID)
+            for m in after.mentions
+            if m.id != after.author.id
+        )
+
+        # Caso 3: el mensaje editado es una respuesta a un usuario protegido
+        # Usamos reference.resolved (sin llamada extra a la API) si está disponible
+        replies_to_protected = False
+        if after.reference:
+            resolved = getattr(after.reference, "resolved", None)
+            if isinstance(resolved, discord.Message):
+                ref_roles = getattr(resolved.author, "roles", [])
+                replies_to_protected = any(r.id == PROTECTED_ROLE_ID for r in ref_roles)
+
+        if not (author_is_protected or mentions_protected or replies_to_protected):
+            return
+
+        await self._send_alert(
+            after,
+            "",
+            "📝 Mensaje editado",
+            f"**Antes:**\n```{before.content[:950]}```\n**Después:**\n```{after.content[:950]}```",
+        )
 
     async def check_voice_channels(self, guild: discord.Guild, target_role_id: int):
         for vc in guild.voice_channels:

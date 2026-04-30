@@ -1,3 +1,4 @@
+import collections
 import json
 import os
 import re
@@ -38,6 +39,10 @@ class BotSetupApp:
         self._restart_lock = threading.Lock()
         self._restart_requested = False
         self.is_busy = False
+
+        # Cola thread-safe para mensajes de consola
+        self._log_queue: collections.deque = collections.deque()
+        threading.Thread(target=self._log_flush_loop, daemon=True).start()
 
         # ── Controles ──────────────────────────────────────────────────────
         self.project_path_text = ft.TextField(
@@ -394,25 +399,36 @@ class BotSetupApp:
         except Exception as e:
             self.log(f"Error al leer .env: {e}", ft.Colors.RED_400)
 
+    def _log_flush_loop(self):
+        """Hilo daemon: vuelca la cola de mensajes a la consola cada 100 ms."""
+        while True:
+            time.sleep(0.1)
+            if not self._log_queue:
+                continue
+            # Eliminar 50 líneas de golpe cuando se supera el límite
+            if len(self.console.controls) > 500:
+                del self.console.controls[:50]
+            while self._log_queue:
+                timestamp, message, color = self._log_queue.popleft()
+                self.console.controls.append(
+                    ft.Text(
+                        f"[{timestamp}] {message}",
+                        color=color,
+                        font_family="Consolas",
+                        size=13,
+                        selectable=True,
+                    )
+                )
+            self.page.update()
+
     def log(self, message, color=ft.Colors.GREY_300):
         timestamp = time.strftime("%H:%M:%S")
-        # Eliminar 50 líneas de golpe cuando se supera el límite (más eficiente que pop(0))
-        if len(self.console.controls) > 500:
-            del self.console.controls[:50]
-        self.console.controls.append(
-            ft.Text(
-                f"[{timestamp}] {message}",
-                color=color,
-                font_family="Consolas",
-                size=13,
-                selectable=True,
-            )
-        )
-        self.console.update()
+        self._log_queue.append((timestamp, message, color))
 
     def clear_console(self, _):
+        self._log_queue.clear()
         self.console.controls.clear()
-        self.console.update()
+        self.page.update()
 
     def update_states(self):
         has_project = bool(self.project_path_text.value)
