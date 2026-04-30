@@ -4,6 +4,7 @@ import io
 import json as js
 import logging
 import re
+import unicodedata
 from pathlib import Path
 from urllib.parse import urlparse
 
@@ -15,6 +16,17 @@ from chainlog_rs import ChainLog
 
 from .code import generate_code
 
+# Regex para eliminar caracteres Unicode invisibles/de formato antes de análisis
+_INVISIBLE_RE = re.compile(
+    r"[\u200b-\u200f\u202a-\u202e\u2060-\u2064\u206a-\u206f\u00ad\u034f\ufeff\ufe00-\ufe0f]"
+)
+
+# Patrones de invite links de Discord (vector común de grooming)
+_DISCORD_INVITE_RE = re.compile(
+    r"(?:https?://)?(?:www\.)?discord(?:(?:app)?\.com/invite|(?:app)?\.gg)/[\w-]+",
+    re.IGNORECASE,
+)
+
 logger = logging.getLogger(__name__)
 
 vt_semaphore = asyncio.Semaphore(4)
@@ -24,6 +36,50 @@ class Message:
     def __init__(self, msg: discord.Message):
         self.msg = msg
         self.scanned_url = None
+
+    # ── Helpers de texto ──────────────────────────────────────────────────
+
+    @staticmethod
+    def _normalize_for_groq(text: str) -> str:
+        """
+        Elimina caracteres Unicode invisibles y de formato antes de enviar a Groq.
+        Previene bypasses mediante zero-width spaces, joiners, bidirectional marks, etc.
+        """
+        text = _INVISIBLE_RE.sub("", text)
+        return unicodedata.normalize("NFC", text)
+
+    # ── Helpers de adjuntos ────────────────────────────────────────────────
+
+    @staticmethod
+    def _attachment_tipo(content_type: str) -> str:
+        """Devuelve una etiqueta legible para el tipo de adjunto."""
+        import re as _re
+
+        m = _re.match(r"^(\w+)/", content_type or "")
+        if m:
+            kind = m.group(1)
+            if kind == "image":
+                return "Imagen"
+            if kind == "video":
+                return "Video"
+        return "Archivo"
+
+    @staticmethod
+    def _describe_attachments(atts: list) -> str:
+        """
+        Construye una descripción multi-línea de una lista de adjuntos.
+        Limita a 10 (límite de Discord) e indica si hay más.
+        """
+        lines = [
+            f"**{Message._attachment_tipo(a.content_type)}** `{a.filename}` — {round(a.size / 1024, 2)} KB"
+            for a in atts[:10]
+        ]
+        extra = (
+            f"\n*(y {len(atts) - 10} archivo(s) adicional(es) no adjunto(s))*"
+            if len(atts) > 10
+            else ""
+        )
+        return "\n".join(lines) + extra
 
     def _get_json_path(self, filename):
         base_dir = Path(__file__).parent.parent.parent
@@ -61,10 +117,20 @@ class Message:
         return False
 
     async def CheckAndAlert(self, vt_api_key, session):
-        """Versión asíncrona que también escanea con VirusTotal si es necesario"""
+        """Escanea el contenido en busca de URLs sospechosas (incluyendo invite links de Discord)."""
+        content = self.msg.content
+
+        # ── Invite links de Discord (no necesitan VirusTotal) ──────────────
+        invite_match = _DISCORD_INVITE_RE.search(content)
+        if invite_match:
+            invite_url = invite_match.group(0)
+            logger.warning(f"[ALERTA] Invite link de Discord detectado: {invite_url}")
+            return True, "discord.gg", invite_url
+
+        # ── URLs estándar con protocolo ──────────────────────────────────
         url_match = re.search(
             r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
-            self.msg.content,
+            content,
         )
         if not url_match:
             return False, None, None
@@ -269,13 +335,18 @@ class Message:
                 """
 
             try:
+                # Normalizamos el texto antes de enviarlo a Groq para evitar
+                # bypasses con caracteres Unicode invisibles (zero-width, etc.)
+                texto_normalizado = Message._normalize_for_groq(
+                    self.msg.content.strip()
+                )
                 chat_completion = await asyncio.wait_for(
                     groq_client.chat.completions.create(
                         messages=[
                             {
                                 "role": "user",
                                 "content": prompt_instrucciones.format(
-                                    texto_usuario=self.msg.content.strip()
+                                    texto_usuario=texto_normalizado
                                 ),
                             }
                         ],
@@ -350,81 +421,71 @@ class Message:
             logger.debug("[DEBUG _ref] El autor NO tiene el rol protegido → ignorar")
             return
 
+        reference = (
+            f"Mandado a: {ref_message.author.mention}"
+            if self.msg.author.id != ref_message.author.id
+            else ""
+        )
+
+        # Lista acumuladora: se ejecutan TODOS los checks antes de devolver
+        results: list = []
+
+        # ── Adjuntos ──────────────────────────────────────────────────────
         if self.msg.attachments:
-            att = self.msg.attachments[0]
-            logger.debug(
-                f"[DEBUG _ref] Adjunto en la respuesta: {att.filename} (type: {att.content_type})"
+            # Audio: transcribir el primero encontrado
+            audio_att = next(
+                (
+                    a
+                    for a in self.msg.attachments
+                    if a.content_type and a.content_type.startswith("audio/")
+                ),
+                None,
             )
-            if att.content_type and att.content_type.startswith("audio/"):
-                logger.debug(
-                    "[DEBUG _ref] Es un audio, procediendo a transcribir la respuesta..."
-                )
+            if audio_att:
+                logger.debug("[DEBUG _ref] Audio detectado, transcribiendo...")
                 transcription = await self.transcribe_audio(
-                    GROQ_CLIENT,
-                    ref_message.author,  # "Mandado a: <usuario protegido>"
+                    GROQ_CLIENT, ref_message.author
                 )
                 logger.debug(f"[DEBUG _ref] Resultado transcripción: {transcription}")
                 if transcription:
-                    return transcription
-                else:
-                    logger.debug("[DEBUG _ref] La transcripción devolvió None")
-                    # Podrías enviar una alerta de error, pero lo dejamos pasar
-                    return
-            else:
-                logger.debug("[DEBUG _ref] El adjunto NO es audio")
+                    results.append(transcription)
 
-            if att.content_type and att.content_type.startswith(
-                ("image/", "video/", "file/")
-            ):
-                file_discord = await att.to_file()
-
-                m = re.match(r"^(\w+)/", att.content_type)
-                tipo = "Archivo"
-                if m:
-                    kind = m.group(1)
-                    if kind == "image":
-                        tipo = "Imagen"
-                    elif kind == "video":
-                        tipo = "Video"
-
-                reference = (
-                    f"Mandado a: {ref_message.author.mention}"
-                    if self.msg.author.id != ref_message.author.id
-                    else ""
+            # Multimedia: imagen / video / archivo
+            media_atts = [
+                a
+                for a in self.msg.attachments
+                if a.content_type
+                and a.content_type.startswith(("image/", "video/", "file/"))
+            ]
+            if media_atts:
+                logger.debug(f"[DEBUG _ref] {len(media_atts)} adjunto(s) multimedia")
+                files_discord = [await a.to_file() for a in media_atts[:10]]
+                results.append(
+                    (
+                        "",
+                        f"📁 {len(media_atts)} archivo(s) detectado(s)",
+                        f"{reference}\n_ _\n{self._describe_attachments(media_atts)}\n_ _",
+                        files_discord,
+                    )
                 )
 
-                return (
-                    "",
-                    f"📁 {tipo} detectado",
-                    f"{reference}\n_ _\n**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB\n_ _",
-                    file_discord,
-                )
-
+        # ── URL ───────────────────────────────────────────────────────────
         is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
         if is_suspecious:
-            reference = (
-                f"Mandado a: {ref_message.author.mention}"
-                if self.msg.author.id != ref_message.author.id
-                else ""
+            results.append(
+                (
+                    "",
+                    "⚠️ Enlace Sospechoso",
+                    f"{reference}\n**Dominio:** {domain}\n**URL:** {url}",
+                    None,
+                )
             )
 
-            return (
-                "",
-                "⚠️ Enlace Sospechoso",
-                f"{reference}\n**Dominio:** {domain}\n**URL:** {url}",
-                None,
-            )
-
-        # Si no había audio en la respuesta, seguir con misconduct sobre el texto
-        logger.debug("[DEBUG _ref] Evaluando misconduct en el texto de la respuesta...")
+        # ── Misconduct (texto) ────────────────────────────────────────────
+        logger.debug("[DEBUG _ref] Evaluando misconduct en el texto...")
         misconduct = await self.Misconduct(GROQ_CLIENT)
         if misconduct:
             code = generate_code()
-            reference = (
-                f"Mandado a: {ref_message.author.mention}"
-                if self.msg.author.id != ref_message.author.id
-                else ""
-            )
             if not discord.utils.get(self.msg.author.roles, id=role_id):
                 chain_log = ChainLog(
                     str(Path(__file__).parent.parent.parent / "data" / "logs.json")
@@ -435,15 +496,18 @@ class Message:
                     "Msg INA. [to {}]".format(ref_message.author.mention),
                     self.msg.jump_url,
                 )
-
-            return (
-                code,
-                "❗ Mensaje inapropiado",
-                f"{reference}\n**Contenido:**\n```{self.msg.content}```",
-                None,
+            results.append(
+                (
+                    code,
+                    "❗ Mensaje inapropiado",
+                    f"{reference}\n**Contenido:**\n```{self.msg.content}```",
+                    None,
+                )
             )
         else:
             logger.debug("[DEBUG _ref] No se detectó misconduct")
+
+        return results if results else None
 
     async def _mention_user(
         self, mentioned_users, role_id, GROQ_CLIENT, vt_api_key, session
@@ -466,40 +530,48 @@ class Message:
         )
 
         if not protected_mentions:
-            return
+            return None
 
+        protegidos_str = ", ".join(m.mention for m in protected_mentions)
+
+        # Lista acumuladora: se ejecutan TODOS los checks antes de devolver
+        results: list = []
+
+        # ── Adjuntos multimedia ───────────────────────────────────────────
         if self.msg.attachments:
-            att = self.msg.attachments[0]
-            if att.content_type and att.content_type.startswith(
-                ("image/", "video/", "file/")
-            ):
-                file_discord = await att.to_file()
-                m = re.match(r"^(\w+)/", att.content_type)
-                tipo = "Archivo"
-                if m:
-                    kind = m.group(1)
-                    if kind == "image":
-                        tipo = "Imagen"
-                    elif kind == "video":
-                        tipo = "Video"
-                return (
-                    "",
-                    f"📁 {tipo} detectado",
-                    f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n_ _\n**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB\n_ _",
-                    file_discord,
+            media_atts = [
+                a
+                for a in self.msg.attachments
+                if a.content_type
+                and a.content_type.startswith(("image/", "video/", "file/"))
+            ]
+            if media_atts:
+                logger.info(
+                    f"[MENTION] {len(media_atts)} adjunto(s) multimedia hacia protegidos"
+                )
+                files_discord = [await a.to_file() for a in media_atts[:10]]
+                results.append(
+                    (
+                        "",
+                        f"📁 {len(media_atts)} archivo(s) detectado(s)",
+                        f"Protegidos: {protegidos_str}\n_ _\n{self._describe_attachments(media_atts)}\n_ _",
+                        files_discord,
+                    )
                 )
 
-        # 1. Análisis de URL
+        # ── URL ───────────────────────────────────────────────────────────
         is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
         if is_suspecious:
-            return (
-                "",
-                "⚠️ Enlace Sospechoso",
-                f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Dominio:** {domain}\n**URL:** {url}",
-                None,
+            results.append(
+                (
+                    "",
+                    "⚠️ Enlace Sospechoso",
+                    f"Protegidos: {protegidos_str}\n**Dominio:** {domain}\n**URL:** {url}",
+                    None,
+                )
             )
 
-        # 2. Análisis de Misconduct
+        # ── Misconduct (texto) ────────────────────────────────────────────
         logger.info(
             f"[MENTION] Analizando misconduct de {self.msg.author} "
             f"hacia protegidos: {[str(m) for m in protected_mentions]}"
@@ -518,9 +590,13 @@ class Message:
                     "Msg INA. [mentions to ...]",
                     self.msg.jump_url,
                 )
-            return (
-                code,
-                "❗ Mensaje inapropiado",
-                f"Protegidos: {', '.join([m.mention for m in protected_mentions])}\n**Contenido:**\n```{self.msg.content}```",
-                None,
+            results.append(
+                (
+                    code,
+                    "❗ Mensaje inapropiado",
+                    f"Protegidos: {protegidos_str}\n**Contenido:**\n```{self.msg.content}```",
+                    None,
+                )
             )
+
+        return results if results else None

@@ -1,6 +1,5 @@
 import logging
 import os
-import re
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -10,6 +9,8 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from groq import AsyncGroq
 
+from chainlog_rs import ChainLog
+
 from .cogs.append_alertdomain import AppendAlertDomain
 from .cogs.append_ignoreword import AppendIgnoreWord
 from .cogs.append_whitelist import AppendWhitelistDomain
@@ -17,6 +18,7 @@ from .cogs.check_user import CheckUser
 from .cogs.list_users import ListUsers
 from .cogs.set_data import SetData
 from .cogs.whisper import Whisper
+from .modules.code import generate_code
 from .modules.database import try_read_row
 from .modules.message import Message
 
@@ -50,6 +52,19 @@ class Krorus(commands.Bot):
         super().__init__(intents=discord.Intents.all())
         self.allowed_guild_id = int(os.getenv("ALLOWED_GUILD_ID", "0"))
         self.http_session: aiohttp.ClientSession | None = None
+
+    @staticmethod
+    def _file_kwargs(file) -> dict:
+        """
+        Genera los kwargs correctos para discord.send() según si `file` es
+        un solo discord.File, una lista de discord.File, o None.
+        """
+        if isinstance(file, list):
+            clean = [f for f in file if f is not None]
+            return {"files": clean} if clean else {}
+        elif file is not None:
+            return {"file": file}
+        return {}
 
     @asynccontextmanager
     async def _get_session(self):
@@ -137,21 +152,25 @@ class Krorus(commands.Bot):
 
             try:
                 jump_url = f":mailbox_with_mail: [Ir directamente al mensaje]({message_or_text.jump_url})"
+                fk = Krorus._file_kwargs(file)
                 if len(message_or_text.content) < 950:
                     embed.add_field(
                         name="Detalles",
                         value=f"{details}\n{jump_url}",
                         inline=False,
                     )
-                    await staff_channel.send(code_str, embed=embed, file=file)
+                    await staff_channel.send(code_str, embed=embed, **fk)
                 else:
                     embed.add_field(name="", value=jump_url, inline=False)
-                    await staff_channel.send(code_str, embed=embed)
-                    await staff_channel.send(details, file=file)
+                    # Los archivos van con el embed para que estén junto al enlace
+                    await staff_channel.send(code_str, embed=embed, **fk)
+                    await staff_channel.send(details)
                 return
             except AttributeError:
                 embed.add_field(name="Detalles", value=details, inline=False)
-                await staff_channel.send(code_str, embed=embed, file=file)
+                await staff_channel.send(
+                    code_str, embed=embed, **Krorus._file_kwargs(file)
+                )
                 return
             except Exception as e:
                 logger.exception(f"Error al enviar alerta: {e}")
@@ -164,7 +183,9 @@ class Krorus(commands.Bot):
             code_str = f"**Code:** {code}" if code else None
             embed.add_field(name="Detalles", value=details, inline=False)
             try:
-                await staff_channel.send(code_str, embed=embed, file=file)
+                await staff_channel.send(
+                    code_str, embed=embed, **Krorus._file_kwargs(file)
+                )
             except Exception as e:
                 logger.exception(f"Error al enviar alerta sin mensaje: {e}")
             return
@@ -192,10 +213,9 @@ class Krorus(commands.Bot):
                 await message.guild.leave()
             return
 
-        # Ignorar palabras configuradas
-        ignore_cog = self.get_cog("AppendIgnoreWord")
-        if ignore_cog and ignore_cog.should_ignore(message.content):
-            return
+        # NOTA: should_ignore se aplica MÁS ABAJO (solo en sección 3).
+        # No se aplica aquí para evitar que un comando de bot actúe como bypass
+        # cuando el mensaje va dirigido a un usuario protegido (reply o mención).
 
         # 1. Respuesta a un mensaje de usuario protegido
         if message.reference:
@@ -205,15 +225,15 @@ class Krorus(commands.Bot):
             async with self._get_session() as session:
                 vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
                 msg = Message(message)
-                result = await msg._ref_message(
+                results = await msg._ref_message(
                     PROTECTED_ROLE_ID,
                     GROQ_CLIENT,
                     vt_api_key,
                     session,
                 )
-                if result is not None:
-                    code, alert, details, file = result
-                    await self._send_alert(message, code, alert, details, file)
+                if results:
+                    for code, alert, details, file in results:
+                        await self._send_alert(message, code, alert, details, file)
             return
 
         # 2. Menciones a usuarios protegidos
@@ -227,16 +247,16 @@ class Krorus(commands.Bot):
             async with self._get_session() as session:
                 vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
                 msg = Message(message)
-                result = await msg._mention_user(
+                results = await msg._mention_user(
                     message.mentions,
                     PROTECTED_ROLE_ID,
                     GROQ_CLIENT,
                     vt_api_key,
                     session,
                 )
-                if result is not None:
-                    code, alert, details, file = result
-                    await self._send_alert(message, code, alert, details, file)
+                if results:
+                    for code, alert, details, file in results:
+                        await self._send_alert(message, code, alert, details, file)
             return
 
         # 3. A partir de aquí, solo se procesa si el autor es un usuario protegido
@@ -247,6 +267,12 @@ class Krorus(commands.Bot):
                 return
 
         if not discord.utils.get(member.roles, id=PROTECTED_ROLE_ID):
+            return
+
+        # Solo aquí aplicamos should_ignore: comandos de bots enviados por el propio protegido.
+        # Colocarlo antes habría permitido usar un comando de bot como bypass en replies/menciones.
+        ignore_cog = self.get_cog("AppendIgnoreWord")
+        if ignore_cog and ignore_cog.should_ignore(message.content):
             return
 
         # Ahora sí ignoramos mensajes demasiado cortos (pero no si tiene adjuntos multimedia)
@@ -290,12 +316,11 @@ class Krorus(commands.Bot):
 
         # Manejo de archivos adjuntos (Audio, Imagen, Video)
         if message.attachments:
-            for att in message.attachments:
-                if not att.content_type:
-                    continue
+            from .modules.message import Message as _Msg
 
-                # Transcripción de audio (si es adjunto de voz/audio)
-                if att.content_type.startswith("audio/"):
+            # Audio: una alerta por cada audio (incluye transcripción)
+            for att in message.attachments:
+                if att.content_type and att.content_type.startswith("audio/"):
                     result = await msg.transcribe_audio(GROQ_CLIENT, message.author)
                     if result:
                         code, title, details, audio_file = result
@@ -303,25 +328,23 @@ class Krorus(commands.Bot):
                             message, code, title, details, file=audio_file
                         )
 
-                elif att.content_type.startswith(("image/", "video/", "file/")):
-                    file_discord = await att.to_file()
-
-                    m = re.match(r"^(\w+)/", att.content_type)
-                    tipo = "Archivo"
-                    if m:
-                        kind = m.group(1)
-                        if kind == "image":
-                            tipo = "Imagen"
-                        elif kind == "video":
-                            tipo = "Video"
-
-                    await self._send_alert(
-                        message,
-                        "",
-                        f"📁 {tipo} detectado",
-                        f"**Nombre:** {att.filename}\n**Tamaño:** {round(att.size / 1024, 2)} KB",
-                        file=file_discord,
-                    )
+            # Multimedia: una única alerta con TODOS los adjuntos agrupados
+            media_atts = [
+                att
+                for att in message.attachments
+                if att.content_type
+                and att.content_type.startswith(("image/", "video/", "file/"))
+            ]
+            if media_atts:
+                files_discord = [await att.to_file() for att in media_atts[:10]]
+                descripcion = _Msg._describe_attachments(media_atts)
+                await self._send_alert(
+                    message,
+                    "",
+                    f"📁 {len(media_atts)} archivo(s) detectado(s)",
+                    descripcion,
+                    file=files_discord,
+                )
             return
 
     async def on_message_edit(self, before: discord.Message, after: discord.Message):
@@ -360,15 +383,49 @@ class Krorus(commands.Bot):
                 ref_roles = getattr(resolved.author, "roles", [])
                 replies_to_protected = any(r.id == PROTECTED_ROLE_ID for r in ref_roles)
 
+        # Si la referencia no está en caché, intentamos obtenerla
+        # (evita bypass editando una reply antigua a un protegido)
+        if not replies_to_protected and after.reference and after.reference.message_id:
+            try:
+                ref_msg = await after.channel.fetch_message(after.reference.message_id)
+                ref_roles = getattr(ref_msg.author, "roles", [])
+                replies_to_protected = any(r.id == PROTECTED_ROLE_ID for r in ref_roles)
+            except discord.NotFound:
+                pass
+
         if not (author_is_protected or mentions_protected or replies_to_protected):
             return
 
+        # Siempre notificar la edición al staff
         await self._send_alert(
             after,
             "",
             "📝 Mensaje editado",
             f"**Antes:**\n```{before.content[:950]}```\n**Después:**\n```{after.content[:950]}```",
         )
+
+        # Si el editor NO es el protegido (es un posible agresor), analizar el
+        # nuevo contenido con Groq y registrar si es inapropiado.
+        if not author_is_protected and after.content.strip():
+            msg_obj = Message(after)
+            misconduct = await msg_obj.Misconduct(GROQ_CLIENT)
+            if misconduct:
+                code = generate_code()
+                chain_log = ChainLog(
+                    str(Path(__file__).parent.parent / "data" / "logs.json")
+                )
+                chain_log.add_alert(
+                    str(after.author.id),
+                    code,
+                    "Msg INA. [edited]",
+                    after.jump_url,
+                )
+                await self._send_alert(
+                    after,
+                    code,
+                    "❗ Contenido inapropiado (edición)",
+                    f"**Contenido editado:**\n```{after.content[:950]}```",
+                )
 
     async def check_voice_channels(self, guild: discord.Guild, target_role_id: int):
         for vc in guild.voice_channels:
