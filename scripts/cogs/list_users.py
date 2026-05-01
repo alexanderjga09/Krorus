@@ -37,7 +37,6 @@ class ListUsers(commands.Cog):
     @commands.slash_command(
         name="list-users", description="Listar usuarios con alertas activas"
     )
-    @default_permissions(administrator=True)
     async def list_users(self, ctx: discord.ApplicationContext) -> None:
         chain_log = get_chain_log()
         users = chain_log.list_users()
@@ -67,5 +66,6 @@ class ListUsers(commands.Cog):
         chain_log = get_chain_log()
         valid = chain_log.verify_chain()
         await ctx.respond(
-            f"¿Cadena íntegra? {'✅ Sí' if valid else '❌ NO, manipulación detectada'}"
+            f"¿Cadena íntegra? {'✅ Sí' if valid else '❌ NO, manipulación detectada'}",
+            ephemeral=True,
         )
