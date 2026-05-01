@@ -3,6 +3,7 @@
 ## Requisitos previos:
 - 🐍 **Python** 3.13.9 [Ir a Descargar](https://www.python.org/downloads/release/python-3139/)
 - 💠 **Git** [Ir a Descargar](https://git-scm.com/install/windows)
+- 🦀 **Rust** [Ir a Descargar](https://rust-lang.org/es/tools/install/)
 
 ### Pasos a seguir:
 
