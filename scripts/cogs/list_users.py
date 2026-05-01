@@ -62,7 +62,6 @@ class ListUsers(commands.Cog):
     @commands.slash_command(
         name="verify-chain", description="Verificar integridad de la cadena de alertas"
     )
-    @default_permissions(administrator=True)
     async def verify_chain(self, ctx: discord.ApplicationContext):
         chain_log = get_chain_log()
         valid = chain_log.verify_chain()
