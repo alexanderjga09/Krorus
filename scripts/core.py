@@ -9,8 +9,6 @@ from discord.ext import commands
 from dotenv import load_dotenv
 from groq import AsyncGroq
 
-from chainlog_rs import ChainLog
-
 from .cogs.append_alertdomain import AppendAlertDomain
 from .cogs.append_ignoreword import AppendIgnoreWord
 from .cogs.append_whitelist import AppendWhitelistDomain
@@ -18,6 +16,7 @@ from .cogs.check_user import CheckUser
 from .cogs.list_users import ListUsers
 from .cogs.set_data import SetData
 from .cogs.whisper import Whisper
+from .modules.chainlog import get_chain_log
 from .modules.code import generate_code
 from .modules.database import try_read_row
 from .modules.message import Message
@@ -411,9 +410,7 @@ class Krorus(commands.Bot):
             misconduct = await msg_obj.Misconduct(GROQ_CLIENT)
             if misconduct:
                 code = generate_code()
-                chain_log = ChainLog(
-                    str(Path(__file__).parent.parent / "data" / "logs.json")
-                )
+                chain_log = get_chain_log()
                 chain_log.add_alert(
                     str(after.author.id),
                     code,

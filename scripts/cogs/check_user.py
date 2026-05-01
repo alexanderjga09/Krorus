@@ -1,11 +1,56 @@
 from datetime import datetime
-from pathlib import Path
 
 import discord
 from discord import default_permissions
 from discord.ext import commands
 
-from chainlog_rs import ChainLog
+from ..modules.chainlog import get_chain_log
+from ..modules.pagination import Paginator
+
+# Número de alertas por página del paginador
+_ALERTS_PER_PAGE = 5
+
+
+def _build_pages(
+    member: discord.Member,
+    alerts: list,
+    chain_log,
+) -> list[discord.Embed]:
+    """Convierte la lista de alertas en páginas de embed listas para el Paginator."""
+    total = len(alerts)
+    chunks = [
+        alerts[i : i + _ALERTS_PER_PAGE] for i in range(0, total, _ALERTS_PER_PAGE)
+    ]
+    pages: list[discord.Embed] = []
+
+    for i, chunk in enumerate(chunks):
+        lines: list[str] = []
+        for alert in chunk:
+            code = alert["data"]["code"]
+            ts = datetime.fromisoformat(alert["timestamp"])
+            hora = ts.strftime("%H:%M:%S")
+            fecha = ts.strftime("%d-%m-%Y")
+            reason = alert["data"]["reason"]
+            url = alert["data"]["jump_url"]
+            pardoned = chain_log.is_pardoned(alert["index"])
+            estado = "⚪ Perdonada | " if pardoned else ""
+            lines.append(
+                f"`{code}` ({hora} | {fecha})\n"
+                f"{estado}{reason} [:mailbox_with_mail:]({url})\n_ _"
+            )
+
+        embed = discord.Embed(
+            title=f"Alertas de {member.display_name}",
+            description="\n".join(lines),
+            color=discord.Color.blue(),
+        )
+        embed.set_thumbnail(url=member.display_avatar.url)
+        embed.set_footer(
+            text=f"Página {i + 1} / {len(chunks)}  ·  {total} alerta(s) en total"
+        )
+        pages.append(embed)
+
+    return pages
 
 
 class CheckUser(commands.Cog):
@@ -21,41 +66,27 @@ class CheckUser(commands.Cog):
         ctx: discord.ApplicationContext,
         member: discord.Option(discord.Member, "El usuario a chequear"),
     ) -> None:
-        # Obtener las alertas del usuario (incluyendo las perdonadas para historia completa)
-        chain_log = ChainLog(
-            str(Path(__file__).parent.parent.parent / "data" / "logs.json")
-        )
+        chain_log = get_chain_log()
         alerts = chain_log.get_user_alerts(str(member.id), include_pardoned=True)
 
         if not alerts:
-            await ctx.respond(f"No hay alertas para {member.display_name}")
+            await ctx.respond(
+                f"✅ **{member.display_name}** no tiene ninguna alerta registrada.",
+                ephemeral=True,
+            )
             return
 
-        # Formatear cada alerta como en tu captura
-        alert_list_lines = []
-        for alert in alerts:
-            code = alert["data"]["code"]
-            # Convertir timestamp ISO a formato "HH:MM:SS | DD-MM-YYYY"
-            ts = datetime.fromisoformat(alert["timestamp"])
-            hora = ts.strftime("%H:%M:%S")
-            fecha = ts.strftime("%d-%m-%Y")
-            reason = alert["data"]["reason"]
-            url = alert["data"]["jump_url"]
-            # Marcar si está perdonada (opcional, puedes quitarlo si no quieres mostrarlo)
-            pardoned = chain_log.is_pardoned(alert["index"])
-            estado = "⚪ Perdonada | " if pardoned else ""
-            # Construir línea exactamente como antes
-            linea = f"`{code}` ({hora} | {fecha})\n{estado}{reason} [:mailbox_with_mail:]({url})\n_ _"
-            alert_list_lines.append(linea)
+        pages = _build_pages(member, alerts, chain_log)
 
-        embed = discord.Embed(
-            title=f"Alertas de {member.display_name}",
-            description="\n".join(alert_list_lines) or "No hay alertas",
-            color=discord.Color.blue(),
-        )
-        embed.set_thumbnail(url=member.display_avatar.url)
+        if len(pages) == 1:
+            # Una sola página: no hacen falta botones de navegación
+            await ctx.respond(embed=pages[0])
+            return
 
-        await ctx.respond(embed=embed)
+        view = Paginator(pages, author_id=ctx.author.id)
+        await ctx.respond(embed=pages[0], view=view)
+        # Guardamos la referencia al mensaje para que on_timeout pueda desactivar los botones
+        view.message = await ctx.interaction.original_response()
 
     @commands.slash_command(
         name="pardon",
@@ -67,11 +98,9 @@ class CheckUser(commands.Cog):
     )
     @discord.option("reason", str, description="Motivo del perdón")
     async def pardon(self, ctx: discord.ApplicationContext, code: str, reason: str):
-        # Usa la instancia global de chain_log (asegúrate de que esté importada)
-        chain_log = ChainLog(
-            str(Path(__file__).parent.parent.parent / "data" / "logs.json")
-        )
+        chain_log = get_chain_log()
         block_index = chain_log.find_alert_index_by_code(code)
+
         if block_index is None:
             await ctx.respond(
                 f"No se encontró una alerta activa con el código `{code}`.",
@@ -79,12 +108,10 @@ class CheckUser(commands.Cog):
             )
             return
 
-        # Verificar que no esté ya perdonada (redundante porque find_alert_index_by_code con only_active=True ya lo filtra)
         if chain_log.is_pardoned(block_index):
             await ctx.respond("Esa alerta ya fue perdonada.", ephemeral=True)
             return
 
-        # Añadir bloque de perdón
         result = chain_log.add_pardon(
             original_block_index=block_index,
             moderator_id=str(ctx.author.id),

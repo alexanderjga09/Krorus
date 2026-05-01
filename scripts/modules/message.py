@@ -12,8 +12,7 @@ import aiohttp
 import discord
 import groq
 
-from chainlog_rs import ChainLog
-
+from .chainlog import get_chain_log
 from .code import generate_code
 
 # Regex para eliminar caracteres Unicode invisibles/de formato antes de análisis
@@ -487,9 +486,7 @@ class Message:
         if misconduct:
             code = generate_code()
             if not discord.utils.get(self.msg.author.roles, id=role_id):
-                chain_log = ChainLog(
-                    str(Path(__file__).parent.parent.parent / "data" / "logs.json")
-                )
+                chain_log = get_chain_log()
                 chain_log.add_alert(
                     str(self.msg.author.id),
                     code,
@@ -581,9 +578,7 @@ class Message:
         if misconduct:
             code = generate_code()
             if not discord.utils.get(self.msg.author.roles, id=role_id):
-                chain_log = ChainLog(
-                    str(Path(__file__).parent.parent.parent / "data" / "logs.json")
-                )
+                chain_log = get_chain_log()
                 chain_log.add_alert(
                     str(self.msg.author.id),
                     code,
