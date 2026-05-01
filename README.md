@@ -23,6 +23,6 @@ git clone https://github.com/alexanderjga09/Krorus.git
 
   - **Allowed Guild ID:** Aquí debes colocar la ID del servidor donde se establecerá el bot. Una vez configurado, el bot no admitirá la entrada ni permanecerá en ningún servidor que no coincida con esta ID.
 
-4. Cuando hayas llenado todos los campos, haz clic en **Configurar**. El programa instalará y preparará todo lo necesario para que, tras un breve momento, el bot comience a funcionar. 💞
+4. Cuando hayas llenado todos los campos, haz clic en **Guardar** y luego de un momento a **Configurar**. El programa instalará y preparará todo lo necesario para que, tras un breve momento, el bot comience a funcionar. 💞
 
 5. Con el bot funcionando en el servidor correcto, utiliza el comando **/set-data** para configurar el canal donde se enviarán las alertas y asignar el rol de Protegido. ✅
