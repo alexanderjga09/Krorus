@@ -37,6 +37,7 @@ class ListUsers(commands.Cog):
     @commands.slash_command(
         name="list-users", description="Listar usuarios con alertas activas"
     )
+    @default_permissions(Administrator=True)
     async def list_users(self, ctx: discord.ApplicationContext) -> None:
         chain_log = get_chain_log()
         users = chain_log.list_users()
