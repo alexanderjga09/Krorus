@@ -64,7 +64,7 @@ git clone https://github.com/alexanderjga09/Krorus.git
 
 ## Comandos
 
-Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper`, todos requieren permisos de **Administrador**.
+Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper` y `/verify-chain`, todos requieren permisos de **Administrador**.
 
 ### ⚙️ Configuración
 
@@ -81,7 +81,7 @@ Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper
 | `/check-user` | Muestra todas las alertas registradas de un usuario (con paginación). | `/check-user [@usuario]` | Administrador |
 | `/pardon` | Perdona una alerta específica por su código, añadiendo un bloque de anulación en la cadena. | `/pardon [código] [motivo]` | Administrador |
 | `/list-users` | Lista todos los usuarios que tienen alertas activas, ordenados por cantidad. | `/list-users` | Administrador |
-| `/verify-chain` | Verifica la integridad criptográfica de la cadena de alertas. Detecta manipulaciones. | `/verify-chain` | Administrador |
+| `/verify-chain` | Verifica la integridad criptográfica de la cadena de alertas. Detecta manipulaciones. | `/verify-chain` | Todos |
 
 ---
 
