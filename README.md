@@ -1,4 +1,37 @@
-# Cómo instalar Krorus
+# Krorus — Bot de Moderación para Discord
+
+## ¿Qué es Krorus?
+
+Krorus es un bot de Discord privado orientado a la **seguridad y moderación discreta** de un servidor. Su propósito principal es monitorear la actividad de usuarios marcados con un rol especial llamado **Protegido**, registrar alertas de forma segura y notificar al equipo de staff ante comportamientos sospechosos, sin intervenir públicamente en el chat.
+
+## Aspectos Generales
+
+| Característica | Detalle |
+|---|---|
+| **Plataforma** | Discord (py-cord) |
+| **IA utilizada** | [Groq](https://console.groq.com/) (modelos LLM para análisis de texto y transcripción de audio) |
+| **Análisis de enlaces** | [VirusTotal](https://www.virustotal.com/) (escaneo de URLs sospechosas) |
+| **Servidor único** | Solo opera en el servidor configurado con el `Allowed Guild ID`. Si se agrega a otro servidor, lo abandona automáticamente. |
+| **Visibilidad** | El bot se mantiene en estado **invisible** en Discord. |
+| **Persistencia** | Las alertas se almacenan en una cadena de bloques local (`chainlog`) con integridad verificable mediante hashing. |
+
+### ¿Cómo funciona el monitoreo?
+
+El bot procesa cada mensaje del servidor siguiendo esta lógica de prioridad:
+
+1. **Respuesta a un Protegido** — Si alguien responde al mensaje de un usuario Protegido, el bot analiza el contenido del mensaje (incluyendo posibles enlaces con VirusTotal).
+2. **Mención a un Protegido** — Si alguien etiqueta a un usuario Protegido, el mensaje es analizado de la misma forma.
+3. **Mensajes enviados por un Protegido** — Cada mensaje de un Protegido es analizado en busca de:
+   - 🔗 **Enlace sensible** → se verifica el dominio contra la lista de alertas o se escanea con VirusTotal.
+   - ❗ **Contenido inapropiado** → la IA (Groq) evalúa si el mensaje tiene conducta inadecuada.
+   - 🎙️ **Audios** → se transcriben automáticamente y se analiza el contenido.
+   - 📁 **Imágenes, videos y archivos** → se reenvían al canal de staff con una descripción.
+
+> Los mensajes que coincidan con la lista de **palabras ignoradas** (como comandos de bots) no serán procesados, para evitar falsos positivos.
+
+---
+
+## Cómo instalar Krorus
 
 ## Requisitos previos:
 - 🐍 **Python** 3.13.9 [Ir a Descargar](https://www.python.org/downloads/release/python-3139/)
@@ -26,3 +59,59 @@ git clone https://github.com/alexanderjga09/Krorus.git
 4. Cuando hayas llenado todos los campos, haz clic en **Guardar** y luego de un momento a **Configurar**. El programa instalará y preparará todo lo necesario para que, tras un breve momento, el bot comience a funcionar. 💞
 
 5. Con el bot funcionando en el servidor correcto, utiliza el comando **/set-data** para configurar el canal donde se enviarán las alertas y asignar el rol de Protegido. ✅
+
+---
+
+## Comandos
+
+Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper`, todos requieren permisos de **Administrador**.
+
+### ⚙️ Configuración
+
+| Comando | Descripción | Uso | Permisos |
+|---|---|---|---|
+| `/set-data` | Configura el canal de staff y el rol Protegido. Reinicia el bot al guardar. | `/set-data [#canal] [@rol]` | Administrador |
+
+---
+
+### 🔍 Gestión de Alertas
+
+| Comando | Descripción | Uso | Permisos |
+|---|---|---|---|
+| `/check-user` | Muestra todas las alertas registradas de un usuario (con paginación). | `/check-user [@usuario]` | Administrador |
+| `/pardon` | Perdona una alerta específica por su código, añadiendo un bloque de anulación en la cadena. | `/pardon [código] [motivo]` | Administrador |
+| `/list-users` | Lista todos los usuarios que tienen alertas activas, ordenados por cantidad. | `/list-users` | Administrador |
+| `/verify-chain` | Verifica la integridad criptográfica de la cadena de alertas. Detecta manipulaciones. | `/verify-chain` | Administrador |
+
+---
+
+### 🌐 Gestión de Dominios
+
+| Comando | Descripción | Uso | Permisos |
+|---|---|---|---|
+| `/append-alertdomain` | Agrega un dominio a la lista de alertas. Cualquier enlace con ese dominio generará una alerta directa. | `/append-alertdomain [dominio]` | Administrador |
+| `/remove-alert-domain` | Elimina un dominio de la lista de alertas. | `/remove-alert-domain [dominio]` | Administrador |
+| `/append-whitelist` | Agrega un dominio a la lista blanca. Los enlaces con ese dominio no serán analizados. | `/append-whitelist [dominio]` | Administrador |
+| `/remove-whitelist-domain` | Elimina un dominio de la lista blanca. | `/remove-whitelist-domain [dominio]` | Administrador |
+
+> **Formato de dominio válido:** `ejemplo.com`, `sub.ejemplo.org`. No incluir `http://` ni rutas.
+
+---
+
+### 🔇 Gestión de Palabras Ignoradas
+
+Útil para ignorar comandos de otros bots (como Mudae) enviados por usuarios Protegidos y evitar falsos positivos.
+
+| Comando | Descripción | Uso | Permisos |
+|---|---|---|---|
+| `/append-ignoreword` | Añade una o varias palabras/comandos a la lista de ignorados. Separar con comas. | `/append-ignoreword [palabra1, palabra2, ...]` | Administrador |
+| `/remove-ignoreword` | Elimina una palabra de la lista de ignorados. | `/remove-ignoreword [palabra]` | Administrador |
+| `/reload-ignorewords` | Recarga la lista de palabras ignoradas desde el archivo (útil si se editó manualmente). | `/reload-ignorewords` | Administrador |
+
+---
+
+### 🔒 Mensajes Secretos
+
+| Comando | Descripción | Uso | Permisos |
+|---|---|---|---|
+| `/whisper` | Envía un mensaje cifrado por DM a otro usuario. Solo el destinatario puede descifrarlo pulsando un botón (expira en 3 minutos). Si el remitente **o** el destinatario tiene el rol Protegido, el contenido del mensaje es interceptado y enviado al canal de staff automáticamente. | `/whisper [@usuario] [mensaje]` | Todos |
