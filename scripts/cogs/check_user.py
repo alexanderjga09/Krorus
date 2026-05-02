@@ -42,7 +42,7 @@ def _build_pages(
         embed = discord.Embed(
             title=f"Alertas de {member.display_name}",
             description="\n".join(lines),
-            color=discord.Color.blue(),
+            color=discord.Color.orange(),
         )
         embed.set_thumbnail(url=member.display_avatar.url)
         embed.set_footer(

@@ -4,10 +4,37 @@ import logging
 import re
 from pathlib import Path
 
+import discord
 from discord import default_permissions
 from discord.ext import commands
 
+from ..modules.pagination import Paginator
+
 logger = logging.getLogger(__name__)
+
+_WORDS_PER_PAGE = 20
+
+
+def _build_pages(words: list[str]) -> list[discord.Embed]:
+    """Divide la lista de palabras ignoradas en páginas de embed."""
+    total = len(words)
+    chunks = [words[i : i + _WORDS_PER_PAGE] for i in range(0, total, _WORDS_PER_PAGE)]
+    pages: list[discord.Embed] = []
+
+    for i, chunk in enumerate(chunks):
+        offset = i * _WORDS_PER_PAGE
+        lines = [f"`{offset + j + 1}.` {word}" for j, word in enumerate(chunk)]
+        embed = discord.Embed(
+            title="🔇 Lista de palabras ignoradas",
+            description="\n".join(lines),
+            color=discord.Color.greyple(),
+        )
+        embed.set_footer(
+            text=f"Página {i + 1} / {len(chunks)}  ·  {total} palabra(s) en total"
+        )
+        pages.append(embed)
+
+    return pages
 
 
 class AppendIgnoreWord(commands.Cog):
@@ -70,11 +97,11 @@ class AppendIgnoreWord(commands.Cog):
             self.ignore_words.extend(new_words)
             await self._write_json(self.ignore_words)
             self._rebuild_matchers()
-        await ctx.respond(f"Se añadieron {len(new_words)} palabras a la lista.")
+        await ctx.respond(f"✅ Se añadieron {len(new_words)} palabra(s) a la lista.")
 
     @commands.slash_command(
         name="remove-ignoreword",
-        description="Remove a word from the ignoreword list",
+        description="Elimina una palabra de la lista de palabras ignoradas.",
     )
     @default_permissions(administrator=True)
     async def remove_ignoreword(self, ctx, word: str):
@@ -92,6 +119,31 @@ class AppendIgnoreWord(commands.Cog):
                 )
 
     @commands.slash_command(
+        name="view-ignorewords",
+        description="Muestra todas las palabras de la lista de ignorados.",
+    )
+    @default_permissions(administrator=True)
+    async def view_ignorewords(self, ctx: discord.ApplicationContext) -> None:
+        # Leemos directamente desde la memoria (siempre sincronizado con el JSON)
+        words = list(self.ignore_words)
+
+        if not words:
+            await ctx.respond(
+                "⚠️ No hay palabras en la lista de ignorados.", ephemeral=True
+            )
+            return
+
+        pages = _build_pages(words)
+
+        if len(pages) == 1:
+            await ctx.respond(embed=pages[0], ephemeral=True)
+            return
+
+        view = Paginator(pages, author_id=ctx.author.id)
+        await ctx.respond(embed=pages[0], view=view, ephemeral=True)
+        view.message = await ctx.interaction.original_response()
+
+    @commands.slash_command(
         name="reload-ignorewords", description="Recarga la lista de palabras ignoradas."
     )
     @default_permissions(administrator=True)
@@ -99,7 +151,7 @@ class AppendIgnoreWord(commands.Cog):
         async with self.lock:
             self.ignore_words = await self._read_json()
             self._rebuild_matchers()
-        await ctx.respond("Lista de palabras ignoradas recargada.", ephemeral=True)
+        await ctx.respond("✅ Lista de palabras ignoradas recargada.", ephemeral=True)
 
     async def _read_json(self) -> list:
         try:
