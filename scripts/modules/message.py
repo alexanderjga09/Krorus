@@ -101,6 +101,16 @@ class Message:
             logger.warning(f"Error JSON en {path}: {e}")
             return []
 
+    def _has_analyzable_text(self) -> bool:
+        content = self.msg.content
+        if not content:
+            return False
+        # Quitar URLs estándar (http/https)
+        text = re.sub(r"https?://\S+", "", content)
+        # Quitar invite links de Discord (con o sin protocolo)
+        text = _DISCORD_INVITE_RE.sub("", text)
+        return len(text.strip()) > 2
+
     def _normalize_domain(self, domain):
         domain = domain.lower()
         if domain.startswith("www."):
@@ -299,6 +309,15 @@ class Message:
 
     async def Misconduct(self, groq_client):
         if not self.msg.content or len(self.msg.content.strip()) == 0:
+            return False
+
+        # Si el mensaje no contiene texto real más allá de URLs o invite links,
+        # no hay nada que un modelo de lenguaje pueda evaluar → skip.
+        if not self._has_analyzable_text():
+            logger.debug(
+                "[Groq] Petición omitida: el mensaje no contiene texto analizable "
+                "(solo URL/invite link sin texto adicional)."
+            )
             return False
 
         async def _call_groq():
