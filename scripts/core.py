@@ -590,4 +590,7 @@ def main() -> None:
     client.add_cog(AppendIgnoreWord(client, PATH_IGNORE_WORDS))
     client.add_cog(HealthCheck(client))
 
-    client.run(os.getenv("TOKEN"))
+    try:
+        client.run(os.getenv("TOKEN"))
+    except Exception as e:
+        logger.exception(f"Unhandled error while running bot: {e}")

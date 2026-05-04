@@ -163,12 +163,14 @@ class BotSetupApp:
     def _cleanup_zombies(self):
         """Busca y mata procesos zombie del bot al iniciar la GUI."""
         def do_cleanup():
-            killed = self._kill_existing_bot_processes()
-            if killed > 0:
+            killed_pids = self._kill_existing_bot_processes()
+            if killed_pids:
                 self.log(
-                    f"🧹 Se cerraron {killed} instancia(s) zombie del bot.",
+                    f"🧹 Se cerraron {len(killed_pids)} instancia(s) zombie del bot: {', '.join(str(p) for p in killed_pids)}.",
                     ft.Colors.ORANGE_400,
                 )
+            else:
+                self.log("✅ No hay instancias zombie del bot.", ft.Colors.GREEN_400)
         self._run_on_thread(do_cleanup)
 
     def _run_on_thread(self, func):
@@ -269,13 +271,16 @@ class BotSetupApp:
     # ── Deteccion y limpieza de instancias ──────────────────────────────
 
     def _find_bot_pids(self) -> list:
-        """Devuelve lista de PIDs de procesos main.py del venv del proyecto."""
+        """Devuelve lista de PIDs de procesos del bot."""
         project = self.project_path_text.value
         if not project:
             return []
-        venv_python = str(self._venv_python()).lower()
-        venv_scripts = os.path.join(venv_python.replace("\\python.exe", ""), "Scripts").lower()
-        pids = []
+        
+        project_path = Path(project).resolve()
+        project_str = str(project_path).lower()
+        
+        # Buscar TODOS los procesos python primero para debug
+        all_python_pids = []
         try:
             res = subprocess.run(
                 ["powershell", "-Command", "Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,Path | ConvertTo-Json"],
@@ -288,22 +293,29 @@ class BotSetupApp:
                 if isinstance(data, dict):
                     data = [data]
                 for proc in data:
-                    proc_path = (proc.get("Path") or "").lower()
-                    if "main.py" not in proc_path:
-                        continue
-                    if venv_python not in proc_path and venv_scripts not in proc_path:
-                        continue
                     pid = proc.get("Id")
-                    if pid:
-                        pids.append(pid)
+                    path = (proc.get("Path") or "").lower()
+                    if pid and path:
+                        all_python_pids.append({"pid": pid, "path": path})
         except Exception:
             pass
+        
+        # Filtrar procesos que están en la carpeta del proyecto
+        pids = []
+        for proc_info in all_python_pids:
+            proc_path = proc_info["path"]
+            # Aceptar si el proceso está en el directorio del proyecto O si tiene main.py O si tiene krorus
+            if (project_str in proc_path or 
+                "main.py" in proc_path or 
+                "krorus" in proc_path):
+                pids.append(proc_info["pid"])
+        
         return pids
 
-    def _kill_existing_bot_processes(self) -> int:
-        """Termina todos los procesos del bot existentes. Devuelve cuantos se cerraron."""
+    def _kill_existing_bot_processes(self) -> list:
+        """Termina procesos del bot existentes. Devuelve PIDs cerrados."""
         pids = self._find_bot_pids()
-        killed = 0
+        killed_pids = []
         for pid in pids:
             try:
                 subprocess.run(
@@ -311,10 +323,10 @@ class BotSetupApp:
                     capture_output=True,
                     creationflags=CREATE_NO_WINDOW,
                 )
-                killed += 1
+                killed_pids.append(pid)
             except Exception:
                 pass
-        return killed
+        return killed_pids
 
     # ── Configuracion del bot (bot_config.json) ─────────────────────────────
 
