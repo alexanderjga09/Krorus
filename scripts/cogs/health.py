@@ -6,7 +6,9 @@ class HealthCheck(commands.Cog):
     def __init__(self, client):
         self.client = client
 
-    @commands.slash_command(name="ping", description="Verifica que el bot esta funcionando.")
+    @commands.slash_command(
+        name="ping", description="Verifica que el bot esta funcionando."
+    )
     async def ping(self, ctx: discord.ApplicationContext):
         await ctx.respond(f"🏓 Pong! Latencia: {round(self.client.latency * 1000)}ms")
 
@@ -15,9 +17,10 @@ class HealthCheck(commands.Cog):
         rate_limited = self.client._rate_limit_until > 0
         rss = "🔴 Rate Limited" if rate_limited else "🟢 Normal"
 
-        await ctx.respond(
-            f"**Estado del Bot**\n"
-            f"- Rate Limit: {rss}\n"
-            f"- Latencia: {round(self.client.latency * 1000)}ms\n"
-            f"- Config: {len(self.client.bot_config)} opciones"
+        embed = discord.Embed(
+            title="Estado del Bot",
+            description=f"- **Rate Limit:** {rss}\n- **Latencia:** {round(self.client.latency * 1000)}ms",
+            color=discord.Color.blue(),
         )
+
+        await ctx.respond(embed=embed)
