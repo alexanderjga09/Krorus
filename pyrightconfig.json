@@ -2,8 +2,8 @@
   "venvPath": ".",
   "venv": ".venv",
   "typeCheckingMode": "basic",
-  "reportMissingImports": "none",
-  "reportUnusedImport": "none",
+  "reportMissingImports": "warning",
+  "reportUnusedImport": "information",
   "reportUnknownMemberType": "none",
   "reportGeneralTypeIssues": "none",
   "reportOptionalMemberAccess": "none",
@@ -13,5 +13,5 @@
   "reportOperatorIssue": "none",
   "reportOptionalOperand": "none",
   "reportAttributeAccessIssue": "none",
-  "reportInvalidTypeForm": "none",
+  "reportInvalidTypeForm": "none"
 }

@@ -1,4 +1,5 @@
 import collections
+import inspect
 import json
 import os
 import re
@@ -39,10 +40,13 @@ class BotSetupApp:
         self._restart_lock = threading.Lock()
         self._restart_requested = False
         self.is_busy = False
+        self._config_changed = False
 
         # Cola thread-safe para mensajes de consola
         self._log_queue: collections.deque = collections.deque()
-        threading.Thread(target=self._log_flush_loop, daemon=True).start()
+
+        # Lock exclusivo para page.update() — evita race conditions entre threads
+        self._update_lock = threading.Lock()
 
         # ── Controles ──────────────────────────────────────────────────────
         self.project_path_text = ft.TextField(
@@ -50,7 +54,7 @@ class BotSetupApp:
             read_only=True,
             expand=True,
             border_color=ft.Colors.BLUE_700,
-            hint_text="Selecciona la carpeta donde está tu bot...",
+            hint_text="Selecciona la carpeta donde esta tu bot...",
         )
         self.token_entry = ft.TextField(
             label="Discord Bot Token",
@@ -127,9 +131,59 @@ class BotSetupApp:
             disabled=True,
         )
 
-        self.page.update()
+        # Badge numerico discreto para indicar commits pendientes
+        self.update_badge = ft.Container(
+            content=ft.Text(
+                "", size=12, weight=ft.FontWeight.W_600, color=ft.Colors.WHITE
+            ),
+            padding=6,
+            bgcolor=ft.Colors.ORANGE_600,
+            border_radius=6,
+            visible=False,
+        )
+
+        # Switches de funciones (se crearan en setup_ui)
+        self.switch_log_multimedia = None
+        self.switch_transcribe_audio = None
+        self.switch_log_message_edits = None
+        self.switch_enable_whisper = None
+        self.switch_monitor_voice = None
+        self.switch_detailed_logging = None
+
         self.setup_ui()
         self._restore_last_path()
+        # Limpiar procesos zombie del bot antes de cualquier cosa
+        self._cleanup_zombies()
+        # Verificacion silenciosa de actualizaciones al abrir la GUI
+        try:
+            threading.Thread(target=self._startup_update_check, daemon=True).start()
+        except Exception:
+            pass
+
+    def _cleanup_zombies(self):
+        """Busca y mata procesos zombie del bot al iniciar la GUI."""
+        def do_cleanup():
+            killed = self._kill_existing_bot_processes()
+            if killed > 0:
+                self.log(
+                    f"🧹 Se cerraron {killed} instancia(s) zombie del bot.",
+                    ft.Colors.ORANGE_400,
+                )
+        self._run_on_thread(do_cleanup)
+
+    def _run_on_thread(self, func):
+        """Ejecuta una funcion en un thread separado."""
+        threading.Thread(target=func, daemon=True).start()
+
+    # ── Thread-safe UI update ─────────────────────────────────────────────
+
+    def _safe_update(self):
+        """Llama a page.update() con lock para evitar race conditions entre threads."""
+        with self._update_lock:
+            try:
+                self.page.update()
+            except Exception:
+                pass
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -163,7 +217,7 @@ class BotSetupApp:
     def _validate_fields(self) -> str | None:
         """
         Valida los campos obligatorios.
-        Devuelve un mensaje de error si algo es inválido, o None si todo está bien.
+        Devuelve un mensaje de error si algo es invalido, o None si todo esta bien.
         """
         if not (self.token_entry.value or "").strip():
             return "El campo 'Discord Bot Token' es obligatorio."
@@ -171,31 +225,31 @@ class BotSetupApp:
         if not guild:
             return "El campo 'Allowed Guild ID' es obligatorio."
         if not guild.isdigit():
-            return "El 'Allowed Guild ID' debe ser un número entero válido."
+            return "El 'Allowed Guild ID' debe ser un numero entero valido."
         return None
 
     def _warn_optional_fields(self):
-        """Registra advertencias si los campos opcionales pero importantes están vacíos."""
+        """Registra advertencias si los campos opcionales pero importantes estan vacios."""
         if not (self.groq_entry.value or "").strip():
             self.log(
-                "⚠️  'Groq API Key' está vacía — el análisis de IA no funcionará.",
+                "⚠️  'Groq API Key' esta vacia — el analisis de IA no funcionara.",
                 ft.Colors.ORANGE_400,
             )
         if not (self.vt_entry.value or "").strip():
             self.log(
-                "⚠️  'VirusTotal API Key' está vacía — el análisis de URLs no funcionará.",
+                "⚠️  'VirusTotal API Key' esta vacia — el analisis de URLs no funcionara.",
                 ft.Colors.ORANGE_400,
             )
 
     def _save_last_path(self, path: str):
-        """Persiste la última carpeta seleccionada en el directorio home del usuario."""
+        """Persiste la ultima carpeta seleccionada en el directorio home del usuario."""
         try:
             _CONFIG_FILE.write_text(json.dumps({"last_path": path}), encoding="utf-8")
         except Exception:
-            pass  # No crítico
+            pass
 
     def _restore_last_path(self):
-        """Restaura la última carpeta usada al iniciar la aplicación."""
+        """Restaura la ultima carpeta usada al iniciar la aplicacion."""
         try:
             if _CONFIG_FILE.exists():
                 data = json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
@@ -204,16 +258,197 @@ class BotSetupApp:
                     self.project_path_text.value = last
                     self.log(f"📁 Directorio restaurado: {last}", ft.Colors.BLUE_200)
                     self.load_env_file(last)
+                    try:
+                        self.load_bot_config_file(last)
+                    except Exception:
+                        pass
                     self.update_states()
         except Exception:
-            pass  # No crítico
+            pass
 
-    # ── UI ─────────────────────────────────────────────────────────────────
+    # ── Deteccion y limpieza de instancias ──────────────────────────────
+
+    def _find_bot_pids(self) -> list:
+        """Devuelve lista de PIDs de procesos main.py del venv del proyecto."""
+        project = self.project_path_text.value
+        if not project:
+            return []
+        venv_python = str(self._venv_python()).lower()
+        venv_scripts = os.path.join(venv_python.replace("\\python.exe", ""), "Scripts").lower()
+        pids = []
+        try:
+            res = subprocess.run(
+                ["powershell", "-Command", "Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,Path | ConvertTo-Json"],
+                capture_output=True,
+                text=True,
+                creationflags=CREATE_NO_WINDOW,
+            )
+            if res.stdout:
+                data = json.loads(res.stdout)
+                if isinstance(data, dict):
+                    data = [data]
+                for proc in data:
+                    proc_path = (proc.get("Path") or "").lower()
+                    if "main.py" not in proc_path:
+                        continue
+                    if venv_python not in proc_path and venv_scripts not in proc_path:
+                        continue
+                    pid = proc.get("Id")
+                    if pid:
+                        pids.append(pid)
+        except Exception:
+            pass
+        return pids
+
+    def _kill_existing_bot_processes(self) -> int:
+        """Termina todos los procesos del bot existentes. Devuelve cuantos se cerraron."""
+        pids = self._find_bot_pids()
+        killed = 0
+        for pid in pids:
+            try:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+                killed += 1
+            except Exception:
+                pass
+        return killed
+
+    # ── Configuracion del bot (bot_config.json) ─────────────────────────────
+
+    def load_bot_config_file(self, folder_path: str) -> None:
+        """Carga las opciones de configuracion del bot desde data/bot_config.json si existe."""
+        cfg_path = Path(folder_path) / "data" / "bot_config.json"
+        if not cfg_path.exists():
+            return
+        try:
+            data = json.loads(cfg_path.read_text(encoding="utf-8"))
+        except Exception as e:
+            self.log(f"Error al leer bot_config.json: {e}", ft.Colors.ORANGE_400)
+            return
+
+        self.switch_log_multimedia.value = data.get("log_multimedia", True)
+        self.switch_transcribe_audio.value = data.get("transcribe_audio", True)
+        self.switch_log_message_edits.value = data.get("log_message_edits", True)
+        self.switch_enable_whisper.value = data.get("enable_whisper", True)
+        self.switch_monitor_voice.value = data.get("monitor_voice_channels", True)
+        self.switch_detailed_logging.value = data.get("detailed_logging", False)
+        self._safe_update()
+
+    def _mark_config_changed(self, e=None):
+        self._auto_save_bot_config()
+
+    def _auto_save_bot_config(self):
+        """Guarda bot_config.json automaticamente cuando cambia un switch."""
+        project = self.project_path_text.value
+        if not project:
+            return
+        cfg = {
+            "log_multimedia": bool(self.switch_log_multimedia.value) if self.switch_log_multimedia else True,
+            "transcribe_audio": bool(self.switch_transcribe_audio.value) if self.switch_transcribe_audio else True,
+            "log_message_edits": bool(self.switch_log_message_edits.value) if self.switch_log_message_edits else True,
+            "enable_whisper": bool(self.switch_enable_whisper.value) if self.switch_enable_whisper else True,
+            "monitor_voice_channels": bool(self.switch_monitor_voice.value) if self.switch_monitor_voice else True,
+            "detailed_logging": bool(self.switch_detailed_logging.value) if self.switch_detailed_logging else False,
+        }
+        cfg_dir = Path(project) / "data"
+        cfg_dir.mkdir(parents=True, exist_ok=True)
+        try:
+            (cfg_dir / "bot_config.json").write_text(
+                json.dumps(cfg, indent=4), encoding="utf-8"
+            )
+            self._config_changed = False
+        except Exception as e:
+            self.log(f"❌ Error al guardar bot_config.json: {e}", ft.Colors.RED_400)
+
+    def reset_config_defaults(self, _):
+        defaults = {
+            "log_multimedia": True,
+            "transcribe_audio": True,
+            "log_message_edits": True,
+            "enable_whisper": True,
+            "monitor_voice_channels": True,
+            "detailed_logging": False,
+        }
+        self.switch_log_multimedia.value = defaults["log_multimedia"]
+        self.switch_transcribe_audio.value = defaults["transcribe_audio"]
+        self.switch_log_message_edits.value = defaults["log_message_edits"]
+        self.switch_enable_whisper.value = defaults["enable_whisper"]
+        self.switch_monitor_voice.value = defaults["monitor_voice_channels"]
+        self.switch_detailed_logging.value = defaults["detailed_logging"]
+        self._auto_save_bot_config()
+        self.log("⚙️  Valores restablecidos y guardados automaticamente.", ft.Colors.BLUE_200)
+
+    def _startup_update_check(self):
+        repo_path = self.project_path_text.value
+        if not repo_path:
+            return
+        try:
+            subprocess.run(
+                ["git", "fetch"],
+                cwd=repo_path,
+                capture_output=True,
+                creationflags=CREATE_NO_WINDOW,
+            )
+            res = subprocess.run(
+                ["git", "rev-list", "--count", "HEAD..@{u}"],
+                cwd=repo_path,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                creationflags=CREATE_NO_WINDOW,
+            )
+            count = int(res.stdout.strip() or 0)
+            if count > 0:
+                self.log(
+                    f"💡 ¡Hay {count} actualizaciones disponibles!", ft.Colors.GREEN_400
+                )
+                try:
+                    self.update_btn.icon = ft.Icon(
+                        ft.Icons.SYSTEM_UPDATE_ALT, color=ft.Colors.ORANGE_400
+                    )
+                    self.update_btn.tooltip = f"Hay {count} actualizaciones disponibles"
+                    self.update_badge.content.value = str(count)
+                    self.update_badge.visible = True
+                    self._safe_update()
+                except Exception:
+                    pass
+        except Exception as e:
+            self.log(
+                f"Error comprobando actualizaciones al inicio: {e}",
+                ft.Colors.ORANGE_400,
+            )
 
     def show_snackbar(self, text, color=ft.Colors.BLUE_ACCENT):
-        # En Flet 0.84.0+ los SnackBars se muestran con page.show_dialog()
-        self.page.show_dialog(ft.SnackBar(content=ft.Text(text), bgcolor=color))
-        self.page.update()
+        def do_snack():
+            try:
+                snack = ft.SnackBar(content=ft.Text(text), bgcolor=color)
+                if hasattr(self.page, "open_snack_bar"):
+                    try:
+                        self.page.snack_bar = snack
+                        self.page.open_snack_bar()
+                        return
+                    except Exception:
+                        pass
+                if hasattr(self.page, "show_snack_bar"):
+                    try:
+                        self.page.snack_bar = snack
+                        self.page.show_snack_bar()
+                        return
+                    except Exception:
+                        pass
+                dlg = ft.AlertDialog(content=ft.Text(text))
+                self.page.dialog = dlg
+                self.page.open_dialog()
+            except Exception:
+                self.log(text, color)
+
+        try:
+            self.page.run_thread(do_snack)
+        except Exception:
+            do_snack()
 
     def pick_folder(self, _):
         try:
@@ -240,6 +475,7 @@ class BotSetupApp:
             subprocess.run(["xdg-open", path], check=False)
 
     def setup_ui(self):
+        # Panel de ajustes principales
         settings_column = ft.Column(
             [
                 ft.Row(
@@ -265,6 +501,76 @@ class BotSetupApp:
             scroll=ft.ScrollMode.AUTO,
         )
 
+        # ── Switches de funciones ──────────────────────────────────────────
+        self.switch_log_multimedia = ft.Switch(
+            label="Registrar multimedia (imagenes, videos, archivos)",
+            value=True,
+            on_change=self._mark_config_changed,
+        )
+        self.switch_transcribe_audio = ft.Switch(
+            label="Transcribir audios (usa Groq)",
+            value=True,
+            on_change=self._mark_config_changed,
+        )
+        self.switch_log_message_edits = ft.Switch(
+            label="Registrar y analizar mensajes editados",
+            value=True,
+            on_change=self._mark_config_changed,
+        )
+        self.switch_enable_whisper = ft.Switch(
+            label="Habilitar /whisper (mensajes secretos)",
+            value=True,
+            on_change=self._mark_config_changed,
+        )
+        self.switch_monitor_voice = ft.Switch(
+            label="Monitorizar canales de voz (alertas de supervision)",
+            value=True,
+            on_change=self._mark_config_changed,
+        )
+        self.switch_detailed_logging = ft.Switch(
+            label="Logs detallados (debug)",
+            value=False,
+            on_change=self._mark_config_changed,
+        )
+
+        reset_btn = ft.Button(
+            "Restablecer predeterminados",
+            icon=ft.Icons.RESTART_ALT,
+            on_click=self.reset_config_defaults,
+        )
+
+        features_column = ft.Column(
+            [
+                ft.Text("Funciones disponibles", size=16, weight=ft.FontWeight.W_600),
+                ft.Text(
+                    "Los cambios se guardan automaticamente al cambiar un interruptor.",
+                    size=12,
+                    color=ft.Colors.GREY,
+                ),
+                ft.Divider(),
+                self.switch_log_multimedia,
+                self.switch_transcribe_audio,
+                self.switch_log_message_edits,
+                self.switch_monitor_voice,
+                self.switch_detailed_logging,
+                ft.Divider(),
+                ft.Text(
+                    "Funciones importantes (no desactivables):",
+                    weight=ft.FontWeight.W_600,
+                ),
+                ft.Text(
+                    "- Verificacion de integridad de la cadena (verify-chain)\n"
+                    "- Allowed Guild enforcement (evita que el bot opere en servidores no autorizados)",
+                    size=12,
+                    color=ft.Colors.GREY,
+                ),
+                ft.Divider(),
+                self.switch_enable_whisper,
+                reset_btn,
+            ],
+            scroll=ft.ScrollMode.AUTO,
+        )
+
         buttons_column = ft.Column(
             [
                 ft.Divider(height=20),
@@ -279,7 +585,7 @@ class BotSetupApp:
                     alignment=ft.MainAxisAlignment.CENTER,
                 ),
                 ft.Row(
-                    [self.restart_btn, self.update_btn],
+                    [self.restart_btn, self.update_btn, self.update_badge],
                     alignment=ft.MainAxisAlignment.CENTER,
                 ),
             ],
@@ -292,6 +598,94 @@ class BotSetupApp:
             else ft.Icon(ft.Icons.TERMINAL, color=ft.Colors.BLUE_ACCENT, size=30)
         )
 
+        # ── Pestanas (compatibilidad multi-versiones de Flet) ─────────────
+        views = [
+            ft.Column([settings_column, ft.Container(expand=True), buttons_column]),
+            ft.Column([features_column, ft.Container(expand=True)]),
+        ]
+
+        self.tabs_control = None
+        try:
+            sig = inspect.signature(ft.Tabs)
+            params = set(sig.parameters.keys())
+        except Exception:
+            params = set()
+
+        # Opcion A: API con tab_bar + content (TabBarView)
+        try:
+            if "tab_bar" in params and "content" in params:
+                self.tabs_control = ft.Tabs(
+                    selected_index=0,
+                    animation_duration=300,
+                    tab_bar=ft.TabBar(
+                        tabs=[
+                            ft.Tab(label="Principal", icon=ft.Icons.SETTINGS),
+                            ft.Tab(label="Funciones", icon=ft.Icons.TOGGLE_ON),
+                        ],
+                    ),
+                    content=ft.TabBarView(controls=views),
+                    expand=True,
+                )
+        except Exception:
+            self.tabs_control = None
+
+        # Opcion B: API con 'tabs' y 'controls'/'views'/'content'
+        if self.tabs_control is None:
+            try:
+                kwargs = {
+                    "selected_index": 0,
+                    "animation_duration": 300,
+                    "expand": True,
+                }
+                if "tabs" in params:
+                    kwargs["tabs"] = [
+                        ft.Tab(label="Principal", icon=ft.Icons.SETTINGS),
+                        ft.Tab(label="Funciones", icon=ft.Icons.TOGGLE_ON),
+                    ]
+                if "controls" in params:
+                    kwargs["controls"] = views
+                elif "views" in params:
+                    kwargs["views"] = views
+                elif "content" in params:
+                    kwargs["content"] = ft.TabBarView(controls=views)
+
+                if any(k in params for k in ("tabs", "controls", "views", "content")):
+                    try:
+                        self.tabs_control = ft.Tabs(**kwargs)
+                    except Exception:
+                        self.tabs_control = None
+            except Exception:
+                self.tabs_control = None
+
+        # Fallback: construir un simple selector de pestanas manual
+        if self.tabs_control is None:
+            self._tab_views = views
+            self._selected_tab = 0
+
+            def make_on_click(i):
+                def _on(e):
+                    self._selected_tab = i
+                    self.tab_view_container.content = self._tab_views[i]
+                    self._safe_update()
+
+                return _on
+
+            btn0 = ft.ElevatedButton(
+                "Principal", icon=ft.Icons.SETTINGS, on_click=make_on_click(0)
+            )
+            btn1 = ft.ElevatedButton(
+                "Funciones", icon=ft.Icons.TOGGLE_ON, on_click=make_on_click(1)
+            )
+            tabs_row = ft.Row([btn0, btn1])
+            self.tab_view_container = ft.Container(
+                content=self._tab_views[0], expand=True
+            )
+            self.tabs_control = ft.Column(
+                [tabs_row, self.tab_view_container], expand=True
+            )
+
+        left_panel = ft.Column([self.tabs_control])
+
         self.page.add(
             ft.Row(
                 [
@@ -302,31 +696,13 @@ class BotSetupApp:
             ft.Divider(height=10, color=ft.Colors.TRANSPARENT),
             ft.Row(
                 [
-                    # Panel Izquierdo
                     ft.Container(
-                        content=ft.Column(
-                            [
-                                ft.Row(
-                                    [
-                                        ft.Text(
-                                            "Configuración",
-                                            size=18,
-                                            weight=ft.FontWeight.W_500,
-                                            expand=True,
-                                        ),
-                                    ]
-                                ),
-                                settings_column,
-                                ft.Container(expand=True),
-                                buttons_column,
-                            ],
-                        ),
+                        content=left_panel,
                         width=380,
                         padding=20,
                         border_radius=10,
                         bgcolor=ft.Colors.SURFACE,
                     ),
-                    # Panel Derecho (Consola)
                     ft.Container(
                         content=ft.Column(
                             [
@@ -367,6 +743,10 @@ class BotSetupApp:
         self.log(f"📁 Carpeta seleccionada: {path}", ft.Colors.BLUE_200)
         self._save_last_path(path)
         self.load_env_file(path)
+        try:
+            self.load_bot_config_file(path)
+        except Exception:
+            pass
         self.update_states()
 
     def load_env_file(self, folder_path):
@@ -395,42 +775,50 @@ class BotSetupApp:
                 if match and not field.value:
                     field.value = match.group(1).strip()
             self.log("🔑 Valores cargados desde .env", ft.Colors.GREEN_200)
-            self.page.update()
+            self._safe_update()
         except Exception as e:
             self.log(f"Error al leer .env: {e}", ft.Colors.RED_400)
-
-    def _log_flush_loop(self):
-        """Hilo daemon: vuelca la cola de mensajes a la consola cada 100 ms."""
-        while True:
-            time.sleep(0.1)
-            if not self._log_queue:
-                continue
-            # Eliminar 50 líneas de golpe cuando se supera el límite
-            if len(self.console.controls) > 500:
-                del self.console.controls[:50]
-            while self._log_queue:
-                timestamp, message, color = self._log_queue.popleft()
-                self.console.controls.append(
-                    ft.Text(
-                        f"[{timestamp}] {message}",
-                        color=color,
-                        font_family="Consolas",
-                        size=13,
-                        selectable=True,
-                    )
-                )
-            self.page.update()
 
     def log(self, message, color=ft.Colors.GREY_300):
         timestamp = time.strftime("%H:%M:%S")
         self._log_queue.append((timestamp, message, color))
 
+        # Flush inmediato en el thread actual con lock
+        self._flush_console()
+
+    def _flush_console(self):
+        """Vacia la cola de logs y actualiza la consola. Thread-safe con lock."""
+        if not self._log_queue:
+            return
+        controls = self.console.controls
+        if controls is None:
+            return
+        if len(controls) > 500:
+            del controls[:50]
+        batch = 0
+        while self._log_queue and batch < 20:
+            timestamp, message, color = self._log_queue.popleft()
+            controls.append(
+                ft.Text(
+                    f"[{timestamp}] {message}",
+                    color=color,
+                    font_family="Consolas",
+                    size=13,
+                    selectable=True,
+                )
+            )
+            batch += 1
+        self._safe_update()
+
     def clear_console(self, _):
         self._log_queue.clear()
-        self.console.controls.clear()
-        self.page.update()
+        controls = self.console.controls
+        if controls:
+            controls.clear()
+        self._safe_update()
 
     def update_states(self):
+        """Actualiza el estado de los botones y status. Thread-safe."""
         has_project = bool(self.project_path_text.value)
         is_running = self.is_process_running()
 
@@ -443,7 +831,7 @@ class BotSetupApp:
 
         if is_running:
             self.status_dot.color = ft.Colors.GREEN_400
-            self.status_text.value = "Bot en ejecución"
+            self.status_text.value = "Bot en ejecucion"
             self.status_text.color = ft.Colors.GREEN_400
         elif self.is_busy:
             self.status_dot.color = ft.Colors.ORANGE_400
@@ -456,7 +844,7 @@ class BotSetupApp:
             )
             self.status_text.color = ft.Colors.GREY_400
 
-        self.page.update()
+        self._safe_update()
 
     def is_process_running(self):
         with self.process_lock:
@@ -499,7 +887,7 @@ class BotSetupApp:
                     on_finish(rc)
                 self.update_states()
             except Exception as e:
-                self.log(f"Error de ejecución: {e}", ft.Colors.RED_400)
+                self.log(f"Error de ejecucion: {e}", ft.Colors.RED_400)
                 self.is_busy = False
                 self.update_states()
 
@@ -508,7 +896,6 @@ class BotSetupApp:
     # ── Acciones ───────────────────────────────────────────────────────────
 
     def save_env(self, _):
-        """Guarda las credenciales en .env sin reinstalar dependencias."""
         if not self.project_path_text.value:
             return
         err = self._validate_fields()
@@ -520,7 +907,7 @@ class BotSetupApp:
         try:
             env_path.write_text(self._build_env_content(), encoding="utf-8")
             self.log("✅ Credenciales guardadas en .env", ft.Colors.GREEN_200)
-            self.show_snackbar("Credenciales guardadas", ft.Colors.GREEN_700)
+            self._auto_save_bot_config()
         except Exception as e:
             self.log(f"❌ Error al guardar .env: {e}", ft.Colors.RED_400)
 
@@ -535,7 +922,7 @@ class BotSetupApp:
         self.is_busy = True
         self.progress_bar.visible = True
         self.clear_console(None)
-        self.log("🚀 Iniciando configuración...", ft.Colors.BLUE_200)
+        self.log("🚀 Iniciando configuracion...", ft.Colors.BLUE_200)
         self.update_states()
 
         self._warn_optional_fields()
@@ -577,17 +964,16 @@ class BotSetupApp:
                 on_finish=self.after_setup_complete,
             )
         else:
-            self.log("⚠️ No se encontró requirements.txt", ft.Colors.ORANGE_400)
+            self.log("⚠️ No se encontro requirements.txt", ft.Colors.ORANGE_400)
             self.after_setup_complete(0)
 
     def after_setup_complete(self, rc):
         self.is_busy = False
         self.progress_bar.visible = False
         if rc == 0:
-            self.log("🎉 Configuración finalizada con éxito!", ft.Colors.GREEN_400)
-            self.show_snackbar("Configuración completada", ft.Colors.GREEN_700)
+            self.log("🎉 Configuracion finalizada con exito!", ft.Colors.GREEN_400)
         else:
-            self.log("❌ Hubo errores en la instalación", ft.Colors.RED_400)
+            self.log("❌ Hubo errores en la instalacion", ft.Colors.RED_400)
         self.update_states()
 
     def start_bot(self, _):
@@ -599,22 +985,35 @@ class BotSetupApp:
 
         if not main_file.exists():
             self.log(
-                "❌ No se encontró main.py en la carpeta seleccionada.",
+                "❌ No se encontro main.py en la carpeta seleccionada.",
                 ft.Colors.RED_400,
             )
-            self.show_snackbar("Error: main.py no encontrado", ft.Colors.RED_800)
             return
 
         if not python_bin.exists():
             self.log(
-                "❌ No se encontró el entorno virtual. Ejecuta 'Configurar' primero.",
+                "❌ No se encontro el entorno virtual. Ejecuta 'Configurar' primero.",
                 ft.Colors.RED_400,
             )
             return
 
+        # Si hay instancias zombie, matarlas antes de iniciar
+        zombie_pids = self._find_bot_pids()
+        if zombie_pids:
+            self.log(
+                f"🧹 Se encontraron {len(zombie_pids)} instancia(s) zombie. Cerrandolas...",
+                ft.Colors.ORANGE_400,
+            )
+            for pid in zombie_pids:
+                subprocess.run(
+                    ["taskkill", "/F", "/PID", str(pid)],
+                    capture_output=True,
+                    creationflags=CREATE_NO_WINDOW,
+                )
+            time.sleep(0.5)
+
         self.clear_console(None)
         self.log("🤖 Iniciando bot...", ft.Colors.GREEN_200)
-        self.show_snackbar("Bot iniciado", ft.Colors.GREEN_700)
         self.run_command(
             [str(python_bin), "main.py"],
             cwd=self.project_path_text.value,
@@ -626,25 +1025,21 @@ class BotSetupApp:
             restart = self._restart_requested
             self._restart_requested = False
         if restart:
-            # Pequeño retardo para asegurar que el proceso anterior se libere
             time.sleep(0.5)
             self.start_bot(None)
         else:
-            self.log(f"⏹️ Bot detenido (Código: {rc})", ft.Colors.ORANGE_400)
-            self.show_snackbar(f"Bot detenido (RC: {rc})", ft.Colors.ORANGE_800)
+            self.log(f"⏹️ Bot detenido (Codigo: {rc})", ft.Colors.ORANGE_400)
         self.update_states()
 
     def stop_bot(self):
-        """Detiene el proceso del bot. El subprocess de taskkill se ejecuta fuera del lock."""
         pid = None
         with self.process_lock:
             if self.running_process:
-                self.log("🛑 Solicitando detención...", ft.Colors.ORANGE_400)
+                self.log("🛑 Solicitando detencion...", ft.Colors.ORANGE_400)
                 pid = self.running_process.pid
                 if sys.platform != "win32":
                     self.running_process.terminate()
 
-        # Ejecutar taskkill fuera del lock para no bloquearlo
         if pid and sys.platform == "win32":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
@@ -690,6 +1085,19 @@ class BotSetupApp:
                         f"💡 ¡Hay {count} actualizaciones disponibles!",
                         ft.Colors.GREEN_400,
                     )
+                    try:
+                        self.update_btn.icon = ft.Icon(
+                            ft.Icons.SYSTEM_UPDATE_ALT, color=ft.Colors.ORANGE_400
+                        )
+                        self.update_btn.tooltip = (
+                            f"Hay {count} actualizaciones disponibles"
+                        )
+                        self.update_badge.content.value = str(count)
+                        self.update_badge.visible = True
+                        self._safe_update()
+                    except Exception:
+                        pass
+
                     pull_res = subprocess.run(
                         ["git", "pull"],
                         cwd=repo_path,
@@ -700,10 +1108,7 @@ class BotSetupApp:
                     )
                     if pull_res.returncode == 0:
                         self.log(
-                            "✅ Código actualizado con éxito.", ft.Colors.GREEN_400
-                        )
-                        self.show_snackbar(
-                            "Proyecto actualizado via Git", ft.Colors.BLUE_800
+                            "✅ Codigo actualizado con exito.", ft.Colors.GREEN_400
                         )
 
                         pip_exe = self._venv_pip()
@@ -730,17 +1135,16 @@ class BotSetupApp:
                                         self.log(line)
                                 proc.stdout.close()
                             proc.wait()
-                            self.log("✅ Dependencias al día.", ft.Colors.GREEN_200)
+                            self.log("✅ Dependencias al dia.", ft.Colors.GREEN_200)
                     else:
                         self.log(
                             f"❌ Error al hacer pull: {pull_res.stderr}",
                             ft.Colors.RED_400,
                         )
                 else:
-                    self.log("✅ El repositorio está al día.", ft.Colors.BLUE_200)
-                    self.show_snackbar("No hay actualizaciones disponibles")
+                    self.log("✅ El repositorio esta al dia.", ft.Colors.BLUE_200)
             except Exception as e:
-                self.log(f"⚠️ Error durante la actualización: {e}", ft.Colors.ORANGE_400)
+                self.log(f"⚠️ Error durante la actualizacion: {e}", ft.Colors.ORANGE_400)
             finally:
                 self.is_busy = False
                 self.update_states()
@@ -753,4 +1157,16 @@ def main(page: ft.Page):
 
 
 if __name__ == "__main__":
-    ft.run(main)
+    try:
+        if hasattr(ft, "app"):
+            try:
+                ft.app(target=main)
+            except TypeError:
+                ft.app(main)
+        else:
+            ft.run(main)
+    except Exception:
+        try:
+            ft.run(main)
+        except Exception as e:
+            print("No se pudo iniciar la interfaz Flet:", e)

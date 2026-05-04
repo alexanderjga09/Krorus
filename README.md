@@ -36,7 +36,7 @@ El bot procesa cada mensaje del servidor siguiendo esta lógica de prioridad:
 ## Cómo instalar Krorus
 
 ## Requisitos previos:
-- 🐍 **Python** 3.13.9 [Ir a Descargar](https://www.python.org/downloads/release/python-3139/)
+- 🐍 **Python** 3.13+ [Ir a Descargar](https://www.python.org/downloads/release/python-3139/)
 - 💠 **Git** [Ir a Descargar](https://git-scm.com/install/windows)
 - 🦀 **Rust** [Ir a Descargar](https://rust-lang.org/es/tools/install/)
 
@@ -47,9 +47,9 @@ El bot procesa cada mensaje del servidor siguiendo esta lógica de prioridad:
 git clone https://github.com/alexanderjga09/Krorus.git
 ```
 
-2. Una vez dentro de la carpeta del proyecto, ejecuta el archivo **start.bat**. Este verificará si tienes instalados Python, pip y la librería **Flet**; si esta última no está presente, se instalará automáticamente.
+2. Una vez dentro de la carpeta del proyecto, ejecuta el archivo **start.bat**. Este verificará si tienes instalados Python, pip, Git y la librería **Flet**; si esta última no está presente, se instalará automáticamente. Al abrir la interfaz, se cerrarán automáticamente cualquier instancia zombie del bot que haya quedado en segundo plano.
 
-3. Cuando se haya cargado la interfaz gráfica del bot, selecciona la carpeta del proyecto y rellena los siguientes campos:
+3. Cuando se haya cargado la interfaz gráfica del bot, selecciona la carpeta del proyecto y rellena los siguientes campos. Los cambios se guardan automáticamente al modificar cualquier campo o switch:
   - **Discord Bot Token:** Se obtiene en el [Discord Developer Portal](https://discord.com/developers/home). Debes acceder con tu cuenta de Discord, ir a la sección **Applications** y pulsar el botón **New Application**. Una vez creada, en la sección **Bot** encontrarás el **Token**. Para añadir el bot a un servidor, ve a la sección **OAuth2** -> **URL Generator**, marca las casillas **bot** y **applications.commands**. En permisos, se recomienda seleccionar **Administrator**. Al final se generará un enlace que puedes usar en tu navegador para invitar al bot al servidor.
 
   - **Groq API Key:** Es la IA que usa el bot para sus funciones principales. Para obtenerla, ve a su [página oficial](https://console.groq.com/home), crea una cuenta y genera la API Key. El plan gratuito tiene un límite de 1000 llamadas diarias (mensajes/audios). Si el servidor tiene mucho tráfico, se recomiendan las opciones de pago de Groq.
@@ -58,9 +58,28 @@ git clone https://github.com/alexanderjga09/Krorus.git
 
   - **Allowed Guild ID:** Aquí debes colocar la ID del servidor donde se establecerá el bot. Una vez configurado, el bot no admitirá la entrada ni permanecerá en ningún servidor que no coincida con esta ID.
 
-4. Cuando hayas llenado todos los campos, haz clic en **Guardar** y luego de un momento a **Configurar**. El programa instalará y preparará todo lo necesario para que, tras un breve momento, el bot comience a funcionar. 💞
+4. Cuando hayas llenado todos los campos, haz clic en **Configurar**. El programa instalará y preparará todo lo necesario para que, tras un breve momento, el bot comience a funcionar. 💞 Los cambios en los switches de funciones se guardan automáticamente sin necesidad de pulsar un botón adicional.
 
 5. Con el bot funcionando en el servidor correcto, utiliza el comando **/set-data** para configurar el canal donde se enviarán las alertas y asignar el rol de **Protegido** (el rol que se le dará a los miembros menores de edad). ✅
+
+---
+
+## Características Avanzadas
+
+### 🔄 Recarga en Caliente
+Usa el comando `/reload-config` para recargar la configuración desde `bot_config.json` sin reiniciar el bot:
+| Comando | Descripción | Uso | Permisos |
+|---|---|---|---|
+| `/reload-config` | Recarga la configuración desde bot_config.json sin reiniciar. | `/reload-config` | Administrador |
+
+### 🧹 Limpieza Automática de Procesos
+Al abrir la GUI, se detectan y cierran automáticamente instancias zombie del bot que hayan quedado ejecutándose en segundo plano, evitando conflictos de token.
+
+### 💾 Auto-Guardado
+Los switches de funciones en la GUI guardan automáticamente `bot_config.json` al cambiar su estado. No es necesario pulsar un botón de guardar manual.
+
+### 🔐 Cifrado Híbrido para Whispers
+Los mensajes secretos (`/whisper`) usan cifrado híbrido **AES-256-GCM + RSA-OAEP**: cada mensaje tiene una clave AES única cifrada con la clave pública RSA del destinatario. Si el remitente **o** destinatario tiene el rol Protegido, el contenido se intercepta y envía al canal de staff.
 
 ---
 
@@ -72,7 +91,8 @@ Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper
 
 | Comando | Descripción | Uso | Permisos |
 |---|---|---|---|
-| `/set-data` | Configura el canal de staff y el rol Protegido (menores de edad). Reinicia el bot al guardar. | `/set-data [#canal] [@rol]` | Administrador |
+| `/set-data` | Configura el canal de staff y el rol Protegido (menores de edad). Recarga automáticamente. | `/set-data [#canal] [@rol]` | Administrador |
+| `/reload-config` | Recarga la configuración desde `bot_config.json` sin reiniciar. | `/reload-config` | Administrador |
 
 ---
 
@@ -119,4 +139,4 @@ Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper
 
 | Comando | Descripción | Uso | Permisos |
 |---|---|---|---|
-| `/whisper` | Envía un mensaje cifrado por DM a otro usuario. Solo el destinatario puede descifrarlo pulsando un botón (expira en 3 minutos). Si el remitente **o** el destinatario tiene el rol Protegido, el contenido del mensaje es interceptado y enviado al canal de staff automáticamente. | `/whisper [@usuario] [mensaje]` | Todos |
+| `/whisper` | Envía un mensaje cifrado por DM a otro usuario. Solo el destinatario puede descifrarlo pulsando un botón (expira en 3 minutos). Usa cifrado híbrido **AES-256-GCM + RSA-OAEP**. Si el remitente **o** el destinatario tiene el rol Protegido, el contenido es interceptado y enviado al canal de staff automáticamente. Tras el descifrado exitoso, se envía una alerta al staff con el contenido del mensaje. | `/whisper [@usuario] [mensaje]` | Todos |

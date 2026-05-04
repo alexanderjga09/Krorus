@@ -3,5 +3,13 @@ settings.db
 __pycache__
 logs.json
 .venv
+bot_config.json
 whitelist.json
 keysDB.json
+*.bak
+*.tmp
+data/keysDB.json.bak
+chainlog_rs/target/
+*.pyc
+.pytest_cache/
+backups
