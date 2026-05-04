@@ -29,6 +29,7 @@ _DISCORD_INVITE_RE = re.compile(
 logger = logging.getLogger(__name__)
 
 vt_semaphore = asyncio.Semaphore(4)
+_JSON_CACHE = {}
 
 
 class Message:
@@ -86,30 +87,86 @@ class Message:
 
     def _load_json_list(self, filename):
         path = self._get_json_path(filename)
+        # Caché simple para evitar lecturas repetidas en cada mensaje
+        global _JSON_CACHE
+        try:
+            mtime = Path(path).stat().st_mtime
+        except FileNotFoundError:
+            logger.debug(f"Archivo no encontrado: {path}")
+            return []
+
+        cached = _JSON_CACHE.get(filename)
+        if cached and cached.get("mtime") == mtime:
+            return cached.get("data", [])
+
         try:
             with open(path, "r", encoding="utf-8") as f:
                 data = js.load(f)
                 if isinstance(data, list):
+                    _JSON_CACHE[filename] = {"mtime": mtime, "data": data}
                     return data
                 else:
                     logger.warning(f"Formato JSON inesperado en {path}: {type(data)}")
+                    _JSON_CACHE[filename] = {"mtime": mtime, "data": []}
                     return []
-        except FileNotFoundError:
-            logger.debug(f"Archivo no encontrado: {path}")
-            return []
         except js.JSONDecodeError as e:
             logger.warning(f"Error JSON en {path}: {e}")
+            _JSON_CACHE[filename] = {"mtime": mtime, "data": []}
             return []
 
-    def _has_analyzable_text(self) -> bool:
-        content = self.msg.content
+    async def _has_analyzable_text(self) -> bool:
+        content = self.msg.content or ""
         if not content:
             return False
-        # Quitar URLs estándar (http/https)
-        text = re.sub(r"https?://\S+", "", content)
-        # Quitar invite links de Discord (con o sin protocolo)
+
+        url_pattern = r"https?://\S+"
+        urls = re.findall(url_pattern, content)
+
+        text = re.sub(url_pattern, "", content)
         text = _DISCORD_INVITE_RE.sub("", text)
-        return len(text.strip()) > 2
+        if len(text.strip()) > 2:
+            return True
+
+        if not urls:
+            return False
+
+        whitelist_domains = self._load_json_list("whitelist.json")
+        non_whitelisted_urls = []
+        for url in urls:
+            try:
+                parsed = urlparse(url)
+                domain = parsed.netloc.lower()
+                if ":" in domain:
+                    domain = domain.split(":")[0]
+                if not self._domain_matches(domain, whitelist_domains):
+                    non_whitelisted_urls.append(url)
+            except Exception:
+                non_whitelisted_urls.append(url)
+
+        if urls and not non_whitelisted_urls:
+            logger.debug("[Groq SKIP] Solo URLs en whitelist, se omite análisis.")
+            return False
+
+        # Comprobamos si las URLs no whitelisteadas contienen texto en path/query/fragment
+        for url in non_whitelisted_urls or urls:
+            try:
+                parsed = urlparse(url)
+                combined = parsed.path or ""
+                if parsed.query:
+                    combined += "?" + parsed.query
+                if parsed.fragment:
+                    combined += "#" + parsed.fragment
+                if combined:
+                    from urllib.parse import unquote
+
+                    decoded = unquote(combined)
+                    if re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", decoded):
+                        return True
+            except Exception:
+                continue
+
+        # Sin texto significativo en las URLs → no pasar a Groq
+        return False
 
     def _normalize_domain(self, domain):
         domain = domain.lower()
@@ -313,10 +370,9 @@ class Message:
 
         # Si el mensaje no contiene texto real más allá de URLs o invite links,
         # no hay nada que un modelo de lenguaje pueda evaluar → skip.
-        if not self._has_analyzable_text():
+        if not await self._has_analyzable_text():
             logger.debug(
-                "[Groq] Petición omitida: el mensaje no contiene texto analizable "
-                "(solo URL/invite link sin texto adicional)."
+                "[Groq] Petición omitida: no hay texto analizable (solo URL/invite link)."
             )
             return False
 

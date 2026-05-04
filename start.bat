@@ -5,7 +5,7 @@ echo ============================================
 echo   Configurando e iniciando la aplicacion...
 echo ============================================
 
-:: 1. Verificar que Python está instalado
+:: 1. Verificar que Python esta instalado
 python --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] Python no esta instalado o no se encuentra en el PATH.
@@ -14,7 +14,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: 2. Verificar si pip está disponible
+:: 2. Verificar si pip esta disponible
 python -m pip --version >nul 2>&1
 if errorlevel 1 (
     echo [ERROR] pip no esta disponible. Reinstala Python con la opcion de pip habilitada.
@@ -22,7 +22,16 @@ if errorlevel 1 (
     exit /b 1
 )
 
-:: 3. Instalar Flet si no está presente
+:: 3. Verificar que Git esta instalado (necesario para actualizaciones)
+git --version >nul 2>&1
+if errorlevel 1 (
+    echo [ADVERTENCIA] Git no esta instalado o no se encuentra en el PATH.
+    echo La funcion de actualizacion automatica no estara disponible.
+    echo Puedes descargarlo desde https://git-scm.com/
+    echo.
+)
+
+:: 4. Instalar Flet si no esta presente
 echo Verificando dependencia: Flet...
 python -c "import flet" >nul 2>&1
 if errorlevel 1 (
@@ -38,7 +47,7 @@ if errorlevel 1 (
     echo Flet ya esta instalado.
 )
 
-:: 4. Ejecutar la GUI con pythonw (sin consola)
+:: 5. Ejecutar la GUI con pythonw (sin consola)
 if exist "%~dp0setup_gui.py" (
     echo Iniciando la aplicacion...
     start "" pythonw.exe "%~dp0setup_gui.py"
@@ -47,9 +56,5 @@ if exist "%~dp0setup_gui.py" (
     pause
     exit /b 1
 )
-
-:: Si quieres mantener la consola abierta para ver mensajes de error de Python, comenta las lineas anteriores y usa:
-:: python "%~dp0setup_gui.py"
-:: pause
 
 exit /b 0
