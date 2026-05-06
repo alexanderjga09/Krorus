@@ -38,6 +38,8 @@ jobs:
 
       - name: Build and install Rust extensions
         run: |
+          python -m venv .venv
+          source .venv/bin/activate
           pip install maturin
           cd crates/chainlog_rs
           maturin develop --release
