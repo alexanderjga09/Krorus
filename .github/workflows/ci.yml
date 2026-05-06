@@ -34,3 +34,11 @@ jobs:
       - name: Cargo Check
         run: |
           cargo check --workspace
+
+      - name: Build and install Rust extensions
+        run: |
+          pip install maturin
+          cd crates/chainlog_rs
+          maturin develop --release
+          cd ../exif_rs
+          maturin develop --release
