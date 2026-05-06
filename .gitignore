@@ -1,15 +1,66 @@
+# Archivos sensibles y configuración
 .env
 settings.db
-__pycache__
-logs.json
-.venv
 bot_config.json
 whitelist.json
 keysDB.json
-*.bak
-*.tmp
-data/keysDB.json.bak
-chainlog_rs/target/
+
+# Python
+__pycache__/
+*.py[cod]
 *.pyc
 .pytest_cache/
-backups
+.python-version
+
+# Entornos virtuales
+.venv/
+venv/
+env/
+
+# Datos generados
+data/alert_domains.json
+data/ignorewords.json
+data/logs.json
+logs.json
+backups/
+
+# Rust
+crates/*/target/
+target/
+
+# Compilados y extensiones
+*.pyd
+*.so
+*.dll
+lib/*.pyd
+*.lock
+
+# Build y dist
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Testing
+.coverage
+htmlcov/
+coverage.xml
+nosetests.xml
+
+# IDEs
+.idea/
+.vscode/
+.pydevproject
+.project
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Temp
+*.bak
+*.tmp
+*.log
+
+# Docs
+docs/_build/

@@ -17,6 +17,7 @@ from .cogs.append_alertdomain import AppendAlertDomain
 from .cogs.append_ignoreword import AppendIgnoreWord
 from .cogs.append_whitelist import AppendWhitelistDomain
 from .cogs.check_user import CheckUser
+from .cogs.exif_check import ExifCheck
 from .cogs.health import HealthCheck
 from .cogs.list_users import ListUsers
 from .cogs.set_data import SetData
@@ -60,6 +61,7 @@ DEFAULTS = {
     "monitor_voice_channels": True,
     "detailed_logging": False,
     "groq_timeout": 10.0,
+    "check_exif_metadata": True,
 }
 
 try:
@@ -168,6 +170,7 @@ class Krorus(commands.Bot):
             "transcribe_audio",
             "log_message_edits",
             "monitor_voice_channels",
+            "check_exif_metadata",
         ]:
             old_val = bool(old.get(key, True))
             new_val = bool(new_config.get(key, True))
@@ -396,6 +399,7 @@ class Krorus(commands.Bot):
                 or message.attachments[0].content_type.startswith("image/")
                 or message.attachments[0].content_type.startswith("video/")
                 or message.attachments[0].content_type.startswith("file/")
+                or message.attachments[0].content_type.startswith("application/")
             )
         ):
             return
@@ -446,9 +450,29 @@ class Krorus(commands.Bot):
                 att
                 for att in message.attachments
                 if att.content_type
-                and att.content_type.startswith(("image/", "video/", "file/"))
+                and (
+                    att.content_type.startswith(("image/", "video/", "file/"))
+                    or att.content_type.startswith("application/")
+                )
             ]
+            logger.info(f"[EXIF] Attachments: {len(message.attachments)}, Media: {len(media_atts)}")
+            for att in message.attachments:
+                logger.info(f"[EXIF] Attachment: {att.filename}, content_type: {att.content_type}")
+
             if media_atts:
+                if self.get_config("check_exif_metadata", True):
+                    for att in media_atts:
+                        logger.info(f"[EXIF] Checking: {att.filename}, content_type: {att.content_type}")
+                        exif_report = await msg.check_exif_sensible(att)
+                        if exif_report and exif_report.has_sensitive_data:
+                            risk_level = "🚨 ALTO RIESGO" if exif_report.has_high_risk else "⚠️ Riesgo"
+                            await self._send_alert(
+                                message,
+                                "",
+                                f"🔍 {risk_level}: EXIF sensible detectado",
+                                exif_report.summary(),
+                            )
+
                 files_discord = [await att.to_file() for att in media_atts[:10]]
                 descripcion = Message._describe_attachments(media_atts)
                 await self._send_alert(
@@ -589,6 +613,7 @@ def main() -> None:
     client.add_cog(CheckUser(client))
     client.add_cog(AppendIgnoreWord(client, PATH_IGNORE_WORDS))
     client.add_cog(HealthCheck(client))
+    client.add_cog(ExifCheck(client))
 
     try:
         client.run(os.getenv("TOKEN"))

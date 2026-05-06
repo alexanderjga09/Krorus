@@ -70,3 +70,8 @@ docs/_build/
 
 # Pyenv
 .python-version
+# Ignore Python extension builds and caches
+*.pyd
+__pycache__/
+.venv/
+.pytest_cache/

@@ -149,6 +149,7 @@ class BotSetupApp:
         self.switch_enable_whisper = None
         self.switch_monitor_voice = None
         self.switch_detailed_logging = None
+        self.switch_check_exif = None
 
         self.setup_ui()
         self._restore_last_path()
@@ -162,6 +163,7 @@ class BotSetupApp:
 
     def _cleanup_zombies(self):
         """Busca y mata procesos zombie del bot al iniciar la GUI."""
+
         def do_cleanup():
             killed_pids = self._kill_existing_bot_processes()
             if killed_pids:
@@ -171,6 +173,7 @@ class BotSetupApp:
                 )
             else:
                 self.log("✅ No hay instancias zombie del bot.", ft.Colors.GREEN_400)
+
         self._run_on_thread(do_cleanup)
 
     def _run_on_thread(self, func):
@@ -275,15 +278,19 @@ class BotSetupApp:
         project = self.project_path_text.value
         if not project:
             return []
-        
+
         project_path = Path(project).resolve()
         project_str = str(project_path).lower()
-        
+
         # Buscar TODOS los procesos python primero para debug
         all_python_pids = []
         try:
             res = subprocess.run(
-                ["powershell", "-Command", "Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,Path | ConvertTo-Json"],
+                [
+                    "powershell",
+                    "-Command",
+                    "Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,Path | ConvertTo-Json",
+                ],
                 capture_output=True,
                 text=True,
                 creationflags=CREATE_NO_WINDOW,
@@ -299,17 +306,19 @@ class BotSetupApp:
                         all_python_pids.append({"pid": pid, "path": path})
         except Exception:
             pass
-        
+
         # Filtrar procesos que están en la carpeta del proyecto
         pids = []
         for proc_info in all_python_pids:
             proc_path = proc_info["path"]
             # Aceptar si el proceso está en el directorio del proyecto O si tiene main.py O si tiene krorus
-            if (project_str in proc_path or 
-                "main.py" in proc_path or 
-                "krorus" in proc_path):
+            if (
+                project_str in proc_path
+                or "main.py" in proc_path
+                or "krorus" in proc_path
+            ):
                 pids.append(proc_info["pid"])
-        
+
         return pids
 
     def _kill_existing_bot_processes(self) -> list:
@@ -347,6 +356,7 @@ class BotSetupApp:
         self.switch_enable_whisper.value = data.get("enable_whisper", True)
         self.switch_monitor_voice.value = data.get("monitor_voice_channels", True)
         self.switch_detailed_logging.value = data.get("detailed_logging", False)
+        self.switch_check_exif.value = data.get("check_exif_metadata", True)
         self._safe_update()
 
     def _mark_config_changed(self, e=None):
@@ -358,12 +368,27 @@ class BotSetupApp:
         if not project:
             return
         cfg = {
-            "log_multimedia": bool(self.switch_log_multimedia.value) if self.switch_log_multimedia else True,
-            "transcribe_audio": bool(self.switch_transcribe_audio.value) if self.switch_transcribe_audio else True,
-            "log_message_edits": bool(self.switch_log_message_edits.value) if self.switch_log_message_edits else True,
-            "enable_whisper": bool(self.switch_enable_whisper.value) if self.switch_enable_whisper else True,
-            "monitor_voice_channels": bool(self.switch_monitor_voice.value) if self.switch_monitor_voice else True,
-            "detailed_logging": bool(self.switch_detailed_logging.value) if self.switch_detailed_logging else False,
+            "log_multimedia": bool(self.switch_log_multimedia.value)
+            if self.switch_log_multimedia
+            else True,
+            "transcribe_audio": bool(self.switch_transcribe_audio.value)
+            if self.switch_transcribe_audio
+            else True,
+            "log_message_edits": bool(self.switch_log_message_edits.value)
+            if self.switch_log_message_edits
+            else True,
+            "enable_whisper": bool(self.switch_enable_whisper.value)
+            if self.switch_enable_whisper
+            else True,
+            "monitor_voice_channels": bool(self.switch_monitor_voice.value)
+            if self.switch_monitor_voice
+            else True,
+            "detailed_logging": bool(self.switch_detailed_logging.value)
+            if self.switch_detailed_logging
+            else False,
+            "check_exif_metadata": bool(self.switch_check_exif.value)
+            if self.switch_check_exif
+            else True,
         }
         cfg_dir = Path(project) / "data"
         cfg_dir.mkdir(parents=True, exist_ok=True)
@@ -383,6 +408,7 @@ class BotSetupApp:
             "enable_whisper": True,
             "monitor_voice_channels": True,
             "detailed_logging": False,
+            "check_exif_metadata": True,
         }
         self.switch_log_multimedia.value = defaults["log_multimedia"]
         self.switch_transcribe_audio.value = defaults["transcribe_audio"]
@@ -390,8 +416,11 @@ class BotSetupApp:
         self.switch_enable_whisper.value = defaults["enable_whisper"]
         self.switch_monitor_voice.value = defaults["monitor_voice_channels"]
         self.switch_detailed_logging.value = defaults["detailed_logging"]
+        self.switch_check_exif.value = defaults["check_exif_metadata"]
         self._auto_save_bot_config()
-        self.log("⚙️  Valores restablecidos y guardados automaticamente.", ft.Colors.BLUE_200)
+        self.log(
+            "⚙️  Valores restablecidos y guardados automaticamente.", ft.Colors.BLUE_200
+        )
 
     def _startup_update_check(self):
         repo_path = self.project_path_text.value
@@ -544,6 +573,11 @@ class BotSetupApp:
             value=False,
             on_change=self._mark_config_changed,
         )
+        self.switch_check_exif = ft.Switch(
+            label="Verificar EXIF en archivos (detecta ubicacion GPS, camara, etc.)",
+            value=True,
+            on_change=self._mark_config_changed,
+        )
 
         reset_btn = ft.Button(
             "Restablecer predeterminados",
@@ -551,7 +585,7 @@ class BotSetupApp:
             on_click=self.reset_config_defaults,
         )
 
-        features_column = ft.Column(
+        features_list = ft.ListView(
             [
                 ft.Text("Funciones disponibles", size=16, weight=ft.FontWeight.W_600),
                 ft.Text(
@@ -564,6 +598,7 @@ class BotSetupApp:
                 self.switch_transcribe_audio,
                 self.switch_log_message_edits,
                 self.switch_monitor_voice,
+                self.switch_check_exif,
                 self.switch_detailed_logging,
                 ft.Divider(),
                 ft.Text(
@@ -580,7 +615,9 @@ class BotSetupApp:
                 self.switch_enable_whisper,
                 reset_btn,
             ],
-            scroll=ft.ScrollMode.AUTO,
+            expand=True,
+            spacing=4,
+            padding=10,
         )
 
         buttons_column = ft.Column(
@@ -613,7 +650,7 @@ class BotSetupApp:
         # ── Pestanas (compatibilidad multi-versiones de Flet) ─────────────
         views = [
             ft.Column([settings_column, ft.Container(expand=True), buttons_column]),
-            ft.Column([features_column, ft.Container(expand=True)]),
+            ft.Column([features_list, ft.Container(expand=True)], expand=True),
         ]
 
         self.tabs_control = None
