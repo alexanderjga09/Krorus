@@ -1,0 +1,7 @@
+[workspace]
+members = ["crates/chainlog_rs", "crates/exif_rs"]
+resolver = "2"
+
+[profile.release]
+lto = true
+opt-level = 3

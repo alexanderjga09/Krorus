@@ -14,6 +14,10 @@ import groq
 
 from .chainlog import get_chain_log
 from .code import generate_code
+from .exif_checker import (
+    ArchiveExifReport,
+    check_archive_exif,
+)
 
 # Regex para eliminar caracteres Unicode invisibles/de formato antes de análisis
 _INVISIBLE_RE = re.compile(
@@ -80,6 +84,48 @@ class Message:
             else ""
         )
         return "\n".join(lines) + extra
+
+    async def check_exif_sensible(self, attachment: discord.Attachment) -> ArchiveExifReport | None:
+        """
+        Descarga un adjunto y revisa si contiene metadatos EXIF sensibles.
+        Soporta imágenes directas y archivos ZIP que contengan imágenes.
+        Devuelve un reporte si se encuentran datos sensibles, None en caso contrario.
+        """
+        from .exif_checker import ARCHIVE_EXTENSIONS, IMAGE_EXTENSIONS
+
+        ext = Path(attachment.filename).suffix.lower().lstrip(".")
+        is_image = (
+            attachment.content_type
+            and attachment.content_type.startswith("image/")
+            and ext in IMAGE_EXTENSIONS
+        )
+        is_archive = ext in ARCHIVE_EXTENSIONS
+
+        if not is_image and not is_archive:
+            return None
+
+        try:
+            file_data = await attachment.read()
+
+            if attachment.size > 50 * 1024 * 1024:
+                logger.warning(
+                    f"[EXIF] Archivo demasiado grande para analizar: {attachment.filename} ({attachment.size} bytes)"
+                )
+                return None
+
+            report = check_archive_exif(file_data, attachment.filename, attachment.content_type)
+
+            if report.has_sensitive_data or report.has_high_risk:
+                logger.info(
+                    f"[EXIF] Datos sensibles detectados en {attachment.filename}: "
+                    f"alto_riesgo={report.has_high_risk}, findings={len(report.findings)}"
+                )
+                return report
+
+        except Exception as e:
+            logger.error(f"[EXIF] Error al revisar {attachment.filename}: {e}")
+
+        return None
 
     def _get_json_path(self, filename):
         base_dir = Path(__file__).parent.parent.parent
@@ -533,6 +579,12 @@ class Message:
             ]
             if media_atts:
                 logger.debug(f"[DEBUG _ref] {len(media_atts)} adjunto(s) multimedia")
+                exif_findings = []
+                for a in media_atts:
+                    exif_report = await self.check_exif_sensible(a)
+                    if exif_report and exif_report.has_sensitive_data:
+                        exif_findings.append(exif_report)
+
                 files_discord = [await a.to_file() for a in media_atts[:10]]
                 results.append(
                     (
@@ -542,6 +594,17 @@ class Message:
                         files_discord,
                     )
                 )
+
+                for report in exif_findings:
+                    risk_level = "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
+                    results.append(
+                        (
+                            "",
+                            f"🔍 {risk_level}: EXIF sensible",
+                            f"{reference}\n_ _\n{report.summary()}",
+                            None,
+                        )
+                    )
 
         # ── URL ───────────────────────────────────────────────────────────
         is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)
@@ -621,6 +684,13 @@ class Message:
                 logger.info(
                     f"[MENTION] {len(media_atts)} adjunto(s) multimedia hacia protegidos"
                 )
+
+                exif_findings = []
+                for a in media_atts:
+                    exif_report = await self.check_exif_sensible(a)
+                    if exif_report and exif_report.has_sensitive_data:
+                        exif_findings.append(exif_report)
+
                 files_discord = [await a.to_file() for a in media_atts[:10]]
                 results.append(
                     (
@@ -630,6 +700,17 @@ class Message:
                         files_discord,
                     )
                 )
+
+                for report in exif_findings:
+                    risk_level = "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
+                    results.append(
+                        (
+                            "",
+                            f"🔍 {risk_level}: EXIF sensible",
+                            f"Protegidos: {protegidos_str}\n_ _\n{report.summary()}",
+                            None,
+                        )
+                    )
 
         # ── URL ───────────────────────────────────────────────────────────
         is_suspecious, domain, url = await self.CheckAndAlert(vt_api_key, session)

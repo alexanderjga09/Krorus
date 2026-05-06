@@ -28,6 +28,7 @@ El bot procesa cada mensaje del servidor siguiendo esta lógica de prioridad:
    - ❗ **Contenido inapropiado** → la IA (Groq) evalúa si el mensaje tiene conducta inadecuada.
    - 🎙️ **Audios** → se transcriben automáticamente y se analiza el contenido.
    - 📁 **Imágenes, videos y archivos** → se reenvían al canal de staff con una descripción.
+   - 🛰️ **Metadatos EXIF** → las imágenes se analizan en busca de datos sensibles (GPS, serial de cámara, OwnerName, etc.). Si se detecta información de riesgo alto, se genera una alerta inmediata.
 
 > Los mensajes que coincidan con la lista de **palabras ignoradas** (como comandos de bots) no serán procesados, para evitar falsos positivos.
 
@@ -78,8 +79,33 @@ Al abrir la GUI, se detectan y cierran automáticamente instancias zombie del bo
 ### 💾 Auto-Guardado
 Los switches de funciones en la GUI guardan automáticamente `bot_config.json` al cambiar su estado. No es necesario pulsar un botón de guardar manual.
 
+### 🛰️ Análisis de Metadatos EXIF
+El bot analiza los metadatos EXIF de las imágenes adjuntas enviadas por usuarios protegidos. Detecta:
+- **Riesgo alto**: GPS (lat/lon), números de serie de cámara/lente,OwnerName
+- **Riesgo medio**: Modelo de cámara, software usado, fechas de captura
+
+Esta función está implementada en Rust (`crates/exif_rs`) para máximo rendimiento y puede habilitarse/deshabilitarse desde la GUI.
+
 ### 🔐 Cifrado Híbrido para Whispers
 Los mensajes secretos (`/whisper`) usan cifrado híbrido **AES-256-GCM + RSA-OAEP**: cada mensaje tiene una clave AES única cifrada con la clave pública RSA del destinatario. Si el remitente **o** destinatario tiene el rol Protegido, el contenido se intercepta y envía al canal de staff.
+
+---
+
+## Opciones de Configuración
+
+Desde la **GUI** (pestaña "Funciones") puedes personalizar el comportamiento del bot:
+
+| Opción | Descripción | Predeterminado |
+|---|---|---|
+| `log_multimedia` | Registrar imágenes, videos y archivos enviados por protegidos | ✅ Activado |
+| `transcribe_audio` | Transcribir audios usando Groq | ✅ Activado |
+| `log_message_edits` | Registrar y analizar mensajes editados | ✅ Activado |
+| `enable_whisper` | Habilitar comando `/whisper` | ✅ Activado |
+| `monitor_voice_channels` | Alertar cuando un protegido se une a un canal de voz con adultos | ✅ Activado |
+| `check_exif_metadata` | Analizar metadatos EXIF de imágenes (GPS, serial, etc.) | ✅ Activado |
+| `detailed_logging` | Habilitar logs de debug | ❌ Desactivado |
+
+> Los cambios se guardan automáticamente al modificar cualquier switch.
 
 ---
 
@@ -104,6 +130,14 @@ Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper
 | `/pardon` | Perdona una alerta específica por su código, añadiendo un bloque de anulación en la cadena. | `/pardon [código] [motivo]` | Administrador |
 | `/list-users` | Lista todos los usuarios que tienen alertas activas, ordenados por cantidad. | `/list-users` | Administrador |
 | `/verify-chain` | Verifica la integridad criptográfica de la cadena de alertas. Detecta manipulaciones. | `/verify-chain` | Todos |
+
+---
+
+### 🛰️ Análisis EXIF
+
+| Comando | Descripción | Uso | Permisos |
+|---|---|---|---|
+| `/check-exif` | Verifica metadatos EXIF sensibles en un archivo adjunto (pasar ID del mensaje). Muestra GPS, serial de cámara, OwnerName, etc. | `/check-exif [mensaje: ID]` | Administrador |
 
 ---
 
