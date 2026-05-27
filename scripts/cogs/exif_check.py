@@ -16,7 +16,7 @@ class ExifCheck(commands.Cog):
 
     @commands.slash_command(
         name="check-exif",
-        description="Verifica metadatos EXIF sensibles en un archivo adjunto (reply al mensaje).",
+        description="Verifica metadatos EXIF sensibles en un archivo adjunto.",
     )
     @default_permissions(administrator=True)
     async def check_exif(

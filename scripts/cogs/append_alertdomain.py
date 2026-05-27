@@ -1,6 +1,4 @@
 import asyncio
-import json
-import re
 from pathlib import Path
 
 import discord
@@ -8,6 +6,7 @@ from discord import default_permissions
 from discord.ext import commands
 
 from ..modules.pagination import Paginator
+from ..modules.utils import is_valid_domain, read_json, write_json
 
 _DOMAINS_PER_PAGE = 15
 
@@ -55,19 +54,19 @@ class AppendAlertDomain(commands.Cog):
         domain: discord.Option(str, "Dominio a agregar (ej: example.com)"),
     ) -> None:
         domain = domain.strip().lower()
-        if not self._is_valid_domain(domain):
+        if not is_valid_domain(domain):
             await ctx.respond("❌ El formato del dominio no es válido.", ephemeral=True)
             return
 
         async with self.lock:
-            data = await self._read_json()
+            data = await read_json(self.json_path)
             if domain in data:
                 await ctx.respond(
                     f"⚠️ El dominio **{domain}** ya está en la lista.", ephemeral=True
                 )
                 return
             data.append(domain)
-            await self._write_json(data)
+            await write_json(self.json_path, data)
 
         await ctx.respond(f"✅ Dominio **{domain}** agregado a la lista de alertas.")
 
@@ -82,21 +81,21 @@ class AppendAlertDomain(commands.Cog):
         domain: discord.Option(str, "Dominio a remover (ej: example.com)"),
     ) -> None:
         domain = domain.strip().lower()
-        if not self._is_valid_domain(domain):
+        if not is_valid_domain(domain):
             await ctx.respond(
                 f"❌ El dominio **{domain}** no es válido.", ephemeral=True
             )
             return
 
         async with self.lock:
-            data = await self._read_json()
+            data = await read_json(self.json_path)
             if domain not in data:
                 await ctx.respond(
                     f"⚠️ El dominio **{domain}** no está en la lista.", ephemeral=True
                 )
                 return
             data.remove(domain)
-            await self._write_json(data)
+            await write_json(self.json_path, data)
 
         await ctx.respond(f"✅ Dominio **{domain}** removido de la lista de alertas.")
 
@@ -107,7 +106,7 @@ class AppendAlertDomain(commands.Cog):
     @default_permissions(administrator=True)
     async def view_alert_domains(self, ctx: discord.ApplicationContext) -> None:
         async with self.lock:
-            data = await self._read_json()
+            data = await read_json(self.json_path)
 
         if not data:
             await ctx.respond(
@@ -125,23 +124,4 @@ class AppendAlertDomain(commands.Cog):
         await ctx.respond(embed=pages[0], view=view, ephemeral=True)
         view.message = await ctx.interaction.original_response()
 
-    def _is_valid_domain(self, domain: str) -> bool:
-        pattern = r"^(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}$"
-        return re.match(pattern, domain) is not None
 
-    async def _read_json(self) -> list:
-        try:
-            content = await asyncio.to_thread(
-                self.json_path.read_text, encoding="utf-8"
-            )
-            return json.loads(content)
-        except FileNotFoundError:
-            return []
-        except json.JSONDecodeError:
-            backup_path = self.json_path.with_suffix(".json.bak")
-            await asyncio.to_thread(self.json_path.rename, backup_path)
-            return []
-
-    async def _write_json(self, data: list) -> None:
-        content = json.dumps(data, indent=4, ensure_ascii=False)
-        await asyncio.to_thread(self.json_path.write_text, content, encoding="utf-8")

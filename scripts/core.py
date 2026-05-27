@@ -82,12 +82,20 @@ if BOT_CONFIG.get("detailed_logging", False):
 
 class Krorus(commands.Bot):
     def __init__(self):
-        super().__init__(intents=discord.Intents.all())
+        intents = discord.Intents.default()
+        intents.message_content = True
+        intents.members = True
+        intents.voice_states = True
+        super().__init__(intents=intents)
         self.allowed_guild_id = int(os.getenv("ALLOWED_GUILD_ID", "0"))
         self.http_session: aiohttp.ClientSession | None = None
         self.bot_config: dict = {}
         self._rate_limit_until: float = 0
-        self._rate_limit_retry_after: int = 60
+        self._rate_limit_lock = asyncio.Lock()
+        # Buffer de mensajes (sala de espera) para análisis por lotes con Groq
+        self._msg_buffer: dict[int, dict] = {}  # channel_id -> {user_id, messages, task}
+        self._buffer_lock = asyncio.Lock()
+        self._buffer_flush_delay: int = 60
 
     def get_config(self, key: str, default=None):
         """Lee un valor de configuracion. Siempre refleja el estado actual."""
@@ -111,8 +119,101 @@ class Krorus(commands.Bot):
 
     def set_rate_limit(self, seconds: int, reason: str = ""):
         """Activa rate limit por X segundos."""
-        self._rate_limit_until = time.time() + seconds
+        with self._rate_limit_lock:
+            self._rate_limit_until = time.time() + seconds
         logger.warning(f"[RATE LIMIT] Activado por {seconds}s: {reason}")
+
+    # ── Sistema de buffer/sala de espera para Groq ────────────────────────
+
+    async def _buffer_add(self, message: discord.Message):
+        """Buffer de mensajes: acumula texto de usuarios protegidos hasta
+        que otro usuario hable en el canal o pasen 60s sin actividad."""
+        async with self._buffer_lock:
+            channel_id = message.channel.id
+            if channel_id in self._msg_buffer:
+                info = self._msg_buffer[channel_id]
+                if info["user_id"] == message.author.id:
+                    info["messages"].append(message)
+                    info["task"].cancel()
+                    info["task"] = asyncio.create_task(
+                        self._buffer_auto_flush(channel_id)
+                    )
+                    return
+                else:
+                    old_msgs = self._msg_buffer.pop(channel_id)["messages"]
+                    asyncio.create_task(self._process_buffer_async(old_msgs))
+
+            self._msg_buffer[channel_id] = {
+                "user_id": message.author.id,
+                "messages": [message],
+                "task": asyncio.create_task(
+                    self._buffer_auto_flush(channel_id)
+                ),
+            }
+
+    async def _buffer_try_flush(self, message: discord.Message):
+        """Intenta flushear el buffer si otro usuario (no el dueño) habla."""
+        async with self._buffer_lock:
+            info = self._msg_buffer.get(message.channel.id)
+            if info is not None and info["user_id"] != message.author.id:
+                old_msgs = self._msg_buffer.pop(message.channel.id)["messages"]
+                asyncio.create_task(self._process_buffer_async(old_msgs))
+
+    async def _buffer_auto_flush(self, channel_id: int):
+        """Flush automático tras 60s de inactividad del usuario."""
+        await asyncio.sleep(self._buffer_flush_delay)
+        async with self._buffer_lock:
+            info = self._msg_buffer.pop(channel_id, None)
+        if info is not None:
+            await self._process_buffer_async(info["messages"])
+
+    async def _process_buffer_async(self, messages: list[discord.Message]):
+        """Procesa el buffer acumulado: analiza todo el texto combinado."""
+        if not messages:
+            return
+        try:
+            parts = []
+            for msg in messages:
+                ts = msg.created_at.strftime("%H:%M")
+                parts.append(f"[{ts}] {msg.content}")
+            combined_text = "\n".join(parts)
+
+            last_msg = messages[-1]
+            msg_obj = Message(last_msg)
+            misconduct = await msg_obj.Misconduct(
+                GROQ_CLIENT,
+                combined_text=combined_text,
+                timeout=self.get_config("groq_timeout", 10.0),
+            )
+            if misconduct:
+                code = generate_code()
+                # Chain log si algún autor no es protegido
+                for m in messages:
+                    member = m.guild.get_member(m.author.id)
+                    if member and not discord.utils.get(
+                        member.roles, id=PROTECTED_ROLE_ID
+                    ):
+                        chain_log = get_chain_log()
+                        chain_log.add_alert(
+                            str(m.author.id),
+                            code,
+                            "Msg INA. [buffer]",
+                            m.jump_url,
+                        )
+                        break
+
+                alert_text = "\n\n".join(
+                    f"**{m.created_at.strftime('%H:%M')}:** {m.content}"
+                    for m in messages
+                )
+                await self._send_alert(
+                    last_msg,
+                    code,
+                    "❗ Mensaje inapropiado (múltiples mensajes)",
+                    f"**Contenido acumulado:**\n{alert_text[:950]}",
+                )
+        except Exception as e:
+            logger.exception(f"[BUFFER] Error procesando buffer: {e}")
 
     @asynccontextmanager
     async def _get_session(self):
@@ -337,6 +438,9 @@ class Krorus(commands.Bot):
                 await message.guild.leave()
             return
 
+        # ── Sala de espera: si otro usuario habla, flushear buffer ──
+        await self._buffer_try_flush(message)
+
         # 1. Respuesta a un mensaje de usuario protegido
         if message.reference:
             logger.info(
@@ -350,10 +454,14 @@ class Krorus(commands.Bot):
                     GROQ_CLIENT,
                     vt_api_key,
                     session,
+                    do_misconduct=False,
                 )
                 if results:
                     for code, alert, details, file in results:
                         await self._send_alert(message, code, alert, details, file)
+            # Buffer solo si hay un protegido involucrado y el texto es analizable
+            if results is not None and message.content.strip() and await msg._has_analyzable_text():
+                await self._buffer_add(message)
             return
 
         # 2. Menciones a usuarios protegidos
@@ -371,10 +479,14 @@ class Krorus(commands.Bot):
                     GROQ_CLIENT,
                     vt_api_key,
                     session,
+                    do_misconduct=False,
                 )
                 if results:
                     for code, alert, details, file in results:
                         await self._send_alert(message, code, alert, details, file)
+            # Buffer solo si hay un protegido involucrado y el texto es analizable
+            if results is not None and message.content.strip() and await msg._has_analyzable_text():
+                await self._buffer_add(message)
             return
 
         # 3. Solo se procesa si el autor es un usuario protegido
@@ -419,15 +531,9 @@ class Krorus(commands.Bot):
                 f"**Dominio:** {dominio}\n**URL:** {url}",
             )
 
-        # Análisis de misconduct
-        misconduct = await msg.Misconduct(GROQ_CLIENT)
-        if misconduct:
-            await self._send_alert(
-                message,
-                "",
-                "❗ Mensaje inapropiado",
-                f"**Contenido:**\n```{message.content}```",
-            )
+        # Sala de espera: acumular texto para análisis por lotes con Groq
+        if message.content.strip() and await msg._has_analyzable_text():
+            await self._buffer_add(message)
 
         # Manejo de archivos adjuntos
         if message.attachments:
@@ -436,28 +542,27 @@ class Krorus(commands.Bot):
                 logger.debug("[CONFIG] Registro de multimedia deshabilitado.")
                 return
 
+            media_atts = []
             for att in message.attachments:
-                if att.content_type and att.content_type.startswith("audio/"):
+                ct = (att.content_type or "").lower()
+                logger.info(f"[EXIF] Attachment: {att.filename}, content_type: {ct}")
+
+                if ct.startswith("audio/"):
                     if self.get_config("transcribe_audio", True):
-                        result = await msg.transcribe_audio(GROQ_CLIENT, message.author)
+                        result = await msg.transcribe_audio(
+                            GROQ_CLIENT,
+                            message.author,
+                            timeout=self.get_config("groq_timeout", 30.0),
+                        )
                         if result:
                             code, title, details, audio_file = result
                             await self._send_alert(
                                 message, code, title, details, file=audio_file
                             )
+                elif ct.startswith(("image/", "video/", "file/")) or ct.startswith("application/"):
+                    media_atts.append(att)
 
-            media_atts = [
-                att
-                for att in message.attachments
-                if att.content_type
-                and (
-                    att.content_type.startswith(("image/", "video/", "file/"))
-                    or att.content_type.startswith("application/")
-                )
-            ]
             logger.info(f"[EXIF] Attachments: {len(message.attachments)}, Media: {len(media_atts)}")
-            for att in message.attachments:
-                logger.info(f"[EXIF] Attachment: {att.filename}, content_type: {att.content_type}")
 
             if media_atts:
                 if self.get_config("check_exif_metadata", True):
@@ -541,7 +646,10 @@ class Krorus(commands.Bot):
 
         if not author_is_protected and after.content.strip():
             msg_obj = Message(after)
-            misconduct = await msg_obj.Misconduct(GROQ_CLIENT)
+            misconduct = await msg_obj.Misconduct(
+                GROQ_CLIENT,
+                timeout=self.get_config("groq_timeout", 10.0),
+            )
             if misconduct:
                 code = generate_code()
                 chain_log = get_chain_log()
@@ -558,25 +666,35 @@ class Krorus(commands.Bot):
     # ── on_voice_state_update ─────────────────────────────────────────────
 
     async def check_voice_channels(self, guild: discord.Guild, target_role_id: int):
-        for vc in guild.voice_channels:
-            members_in_vc = vc.members
-            members_with_role = [
-                m
-                for m in members_in_vc
-                if discord.utils.get(m.roles, id=target_role_id)
-            ]
-            members_without_role = [
-                m
-                for m in members_in_vc
+        protected_in_vc = [
+            m for m in guild.members
+            if discord.utils.get(m.roles, id=target_role_id)
+            and m.voice and m.voice.channel
+        ]
+        if not protected_in_vc:
+            return
+
+        checked = set()
+        for member in protected_in_vc:
+            vc = member.voice.channel
+            if vc.id in checked:
+                continue
+            checked.add(vc.id)
+
+            others = [
+                m for m in vc.members
                 if not discord.utils.get(m.roles, id=target_role_id)
             ]
-
-            if members_with_role and members_without_role:
+            if others:
+                protegidos = [
+                    m for m in vc.members
+                    if discord.utils.get(m.roles, id=target_role_id)
+                ]
                 await self._send_alert(
                     f"Se ha detectado una situacion de supervision en el canal **{vc.mention}**.",
                     "",
                     "⚠️ Alerta de supervision en canal de voz",
-                    f"**Protegidos:**\n{', '.join([m.mention for m in members_with_role]) or 'Ninguno'}\n_ _\n**Miembros:**\n{', '.join([m.mention for m in members_without_role]) or 'Ninguno'}",
+                    f"**Protegidos:**\n{', '.join([m.mention for m in protegidos]) or 'Ninguno'}\n_ _\n**Miembros:**\n{', '.join([m.mention for m in others]) or 'Ninguno'}",
                 )
 
     async def on_voice_state_update(

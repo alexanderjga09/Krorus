@@ -1,9 +1,11 @@
 import asyncio
 import base64
+import hashlib
 import io
 import json as js
 import logging
 import re
+import time
 import unicodedata
 from pathlib import Path
 from urllib.parse import urlparse
@@ -34,6 +36,37 @@ logger = logging.getLogger(__name__)
 
 vt_semaphore = asyncio.Semaphore(4)
 _JSON_CACHE = {}
+
+
+class GroqRateLimiter:
+    """Controla que no excedamos las llamadas/minuto a la API de Groq."""
+
+    def __init__(self, max_calls: int = 25, window: float = 60.0):
+        self.max_calls = max_calls
+        self.window = window
+        self._timestamps: list[float] = []
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        async with self._lock:
+            now = time.time()
+            cutoff = now - self.window
+            self._timestamps = [t for t in self._timestamps if t > cutoff]
+            if len(self._timestamps) >= self.max_calls:
+                wait = self._timestamps[0] + self.window - now
+                if wait > 0:
+                    logger.info(
+                        f"[Groq RateLimit] Esperando {wait:.1f}s para respetar "
+                        f"límite de {self.max_calls} llamadas/{self.window}s"
+                    )
+                    await asyncio.sleep(wait)
+                    now = time.time()
+                    cutoff = now - self.window
+                    self._timestamps = [t for t in self._timestamps if t > cutoff]
+            self._timestamps.append(now)
+
+
+groq_rate_limiter = GroqRateLimiter()
 
 
 class Message:
@@ -104,14 +137,14 @@ class Message:
         if not is_image and not is_archive:
             return None
 
+        if attachment.size > 50 * 1024 * 1024:
+            logger.warning(
+                f"[EXIF] Archivo demasiado grande para analizar: {attachment.filename} ({attachment.size} bytes)"
+            )
+            return None
+
         try:
             file_data = await attachment.read()
-
-            if attachment.size > 50 * 1024 * 1024:
-                logger.warning(
-                    f"[EXIF] Archivo demasiado grande para analizar: {attachment.filename} ({attachment.size} bytes)"
-                )
-                return None
 
             report = check_archive_exif(file_data, attachment.filename, attachment.content_type)
 
@@ -133,31 +166,30 @@ class Message:
 
     def _load_json_list(self, filename):
         path = self._get_json_path(filename)
-        # Caché simple para evitar lecturas repetidas en cada mensaje
         global _JSON_CACHE
         try:
-            mtime = Path(path).stat().st_mtime
+            content = path.read_bytes()
+            content_hash = hashlib.sha256(content).hexdigest()
         except FileNotFoundError:
             logger.debug(f"Archivo no encontrado: {path}")
             return []
 
         cached = _JSON_CACHE.get(filename)
-        if cached and cached.get("mtime") == mtime:
+        if cached and cached.get("hash") == content_hash:
             return cached.get("data", [])
 
         try:
-            with open(path, "r", encoding="utf-8") as f:
-                data = js.load(f)
-                if isinstance(data, list):
-                    _JSON_CACHE[filename] = {"mtime": mtime, "data": data}
-                    return data
-                else:
-                    logger.warning(f"Formato JSON inesperado en {path}: {type(data)}")
-                    _JSON_CACHE[filename] = {"mtime": mtime, "data": []}
-                    return []
+            data = js.loads(content)
+            if isinstance(data, list):
+                _JSON_CACHE[filename] = {"hash": content_hash, "data": data}
+                return data
+            else:
+                logger.warning(f"Formato JSON inesperado en {path}: {type(data)}")
+                _JSON_CACHE[filename] = {"hash": content_hash, "data": []}
+                return []
         except js.JSONDecodeError as e:
             logger.warning(f"Error JSON en {path}: {e}")
-            _JSON_CACHE[filename] = {"mtime": mtime, "data": []}
+            _JSON_CACHE[filename] = {"hash": content_hash, "data": []}
             return []
 
     async def _has_analyzable_text(self) -> bool:
@@ -168,29 +200,39 @@ class Message:
         url_pattern = r"https?://\S+"
         urls = re.findall(url_pattern, content)
 
+        # Si hay URLs, verificar whitelist primero antes de considerar el texto
+        if urls:
+            whitelist_domains = self._load_json_list("whitelist.json")
+            non_whitelisted_urls = []
+            for url in urls:
+                try:
+                    parsed = urlparse(url)
+                    domain = parsed.netloc.lower()
+                    if ":" in domain:
+                        domain = domain.split(":")[0]
+                    if not self._domain_matches(domain, whitelist_domains):
+                        non_whitelisted_urls.append(url)
+                except Exception:
+                    non_whitelisted_urls.append(url)
+
+            # Si todas las URLs están whitelisteadas, omitir análisis completamente
+            if not non_whitelisted_urls:
+                logger.debug("[Groq SKIP] Solo URLs en whitelist, se omite análisis.")
+                return False
+        else:
+            non_whitelisted_urls = []
+
         text = re.sub(url_pattern, "", content)
         text = _DISCORD_INVITE_RE.sub("", text)
-        if len(text.strip()) > 2:
+        stripped = text.strip()
+        if len(stripped) > 2:
             return True
 
-        if not urls:
+        if not stripped and urls:
+            logger.debug("[Groq SKIP] Solo URLs, sin texto de usuario.")
             return False
 
-        whitelist_domains = self._load_json_list("whitelist.json")
-        non_whitelisted_urls = []
-        for url in urls:
-            try:
-                parsed = urlparse(url)
-                domain = parsed.netloc.lower()
-                if ":" in domain:
-                    domain = domain.split(":")[0]
-                if not self._domain_matches(domain, whitelist_domains):
-                    non_whitelisted_urls.append(url)
-            except Exception:
-                non_whitelisted_urls.append(url)
-
-        if urls and not non_whitelisted_urls:
-            logger.debug("[Groq SKIP] Solo URLs en whitelist, se omite análisis.")
+        if not urls:
             return False
 
         # Comprobamos si las URLs no whitelisteadas contienen texto en path/query/fragment
@@ -351,7 +393,7 @@ class Message:
                 logger.error(f"[ERROR VT] Error de red: {e}")
                 return False
 
-    async def transcribe_audio(self, GROQ_CLIENT, member: discord.Member = None):
+    async def transcribe_audio(self, GROQ_CLIENT, member: discord.Member = None, timeout: float = 30.0):
         if not self.msg.attachments:
             return
         audio_attachment = self.msg.attachments[0]
@@ -379,10 +421,14 @@ class Message:
             audio_buffer = io.BytesIO(audio_data)
             audio_buffer.name = audio_attachment.filename
 
-            transcription = await GROQ_CLIENT.audio.transcriptions.create(
-                file=audio_buffer,
-                model="whisper-large-v3-turbo",
-                response_format="text",
+            await groq_rate_limiter.acquire()
+            transcription = await asyncio.wait_for(
+                GROQ_CLIENT.audio.transcriptions.create(
+                    file=audio_buffer,
+                    model="whisper-large-v3-turbo",
+                    response_format="text",
+                ),
+                timeout=timeout,
             )
 
             # Creamos el objeto discord.File para el retorno
@@ -410,17 +456,20 @@ class Message:
                 None,
             )
 
-    async def Misconduct(self, groq_client):
-        if not self.msg.content or len(self.msg.content.strip()) == 0:
-            return False
+    async def Misconduct(self, groq_client, combined_text: str | None = None, timeout: float = 10.0):
+        if combined_text is not None:
+            text_to_analyze = Message._normalize_for_groq(combined_text)
+        else:
+            if not self.msg.content or len(self.msg.content.strip()) == 0:
+                return False
 
-        # Si el mensaje no contiene texto real más allá de URLs o invite links,
-        # no hay nada que un modelo de lenguaje pueda evaluar → skip.
-        if not await self._has_analyzable_text():
-            logger.debug(
-                "[Groq] Petición omitida: no hay texto analizable (solo URL/invite link)."
-            )
-            return False
+            if not await self._has_analyzable_text():
+                logger.debug(
+                    "[Groq] Petición omitida: no hay texto analizable (solo URL/invite link)."
+                )
+                return False
+
+            text_to_analyze = Message._normalize_for_groq(self.msg.content.strip())
 
         async def _call_groq():
             prompt_instrucciones = """
@@ -439,6 +488,7 @@ class Message:
                 - Uso Coloquial/Muletillas: Palabras soeces usadas como exclamación sin un objetivo personal (Ej: "¡Joder, qué calor!", "Esta mierda no funciona").
                 - Insultos Leves/Genéricos: Quejas genéricas no dirigidas a individuos concretos de forma grave (Ej: "El juego es una estupidez").
                 - Mención Meta-lingüística: Discusión sobre las palabras en sí sin usarlas como ataque.
+                - Frases Hechas/Refranes/Dichos Populares: Expresiones idiomáticas, proverbios o preguntas retóricas usadas en contexto conversacional sin intención de daño (Ej: "Si él se tira de un puente, ¿tú también?", "Más vale pájaro en mano que ciento volando", "A caballo regalado no le mires el diente").
 
                 IMPORTANTE SOBRE OFUSCACIÓN:
                 Evalúa la intención real. Debes detectar infracciones incluso si usan:
@@ -455,31 +505,27 @@ class Message:
                 """
 
             try:
-                # Normalizamos el texto antes de enviarlo a Groq para evitar
-                # bypasses con caracteres Unicode invisibles (zero-width, etc.)
-                texto_normalizado = Message._normalize_for_groq(
-                    self.msg.content.strip()
-                )
+                await groq_rate_limiter.acquire()
                 chat_completion = await asyncio.wait_for(
                     groq_client.chat.completions.create(
                         messages=[
                             {
                                 "role": "user",
                                 "content": prompt_instrucciones.format(
-                                    texto_usuario=texto_normalizado
+                                    texto_usuario=text_to_analyze
                                 ),
                             }
                         ],
                         model="llama-3.3-70b-versatile",
                         temperature=0.0,
                     ),
-                    timeout=10.0,
+                    timeout=timeout,
                 )
                 response = chat_completion.choices[0].message.content.strip().lower()
                 return response.startswith("true")
             except asyncio.TimeoutError:
                 logger.warning(
-                    f"[Groq] Timeout al analizar mensaje: {self.msg.content[:50]}..."
+                    f"[Groq] Timeout al analizar: {text_to_analyze[:80]}..."
                 )
                 return False
             except groq.AuthenticationError:
@@ -494,10 +540,16 @@ class Message:
                     "Comprueba tu red (VPN/proxy) o el estado de tu cuenta Groq."
                 )
                 return False
-            except groq.RateLimitError:
+            except groq.RateLimitError as e:
+                retry_after = 60
+                try:
+                    retry_after = float(e.response.headers.get("retry-after", 60))
+                except Exception:
+                    pass
                 logger.warning(
-                    "[Groq] Límite de uso alcanzado. Reintenta en unos segundos."
+                    f"[Groq] 429 Too Many Requests. Esperando {retry_after:.0f}s..."
                 )
+                await asyncio.sleep(retry_after)
                 return False
             except groq.APIConnectionError as e:
                 logger.error(f"[Groq] Error de conexión con la API: {e}")
@@ -511,7 +563,7 @@ class Message:
 
         return await _call_groq()
 
-    async def _ref_message(self, role_id, GROQ_CLIENT, vt_api_key, session):
+    async def _ref_message(self, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True):
         logger.debug(
             f"[REF] _ref_message llamado para msg {self.msg.id} con referencia a {self.msg.reference.message_id if self.msg.reference else 'None'}"
         )
@@ -522,17 +574,21 @@ class Message:
         except discord.NotFound:
             logger.debug("[REF] Mensaje referenciado no encontrado")
             return
+        except (discord.Forbidden, discord.HTTPException) as e:
+            logger.debug(f"[REF] Error al obtener mensaje referenciado: {e}")
+            return
 
-        if ref_message.author == self.msg.author and not discord.utils.get(
-            self.msg.author.roles, id=role_id
+        msg_author_roles = getattr(self.msg.author, "roles", [])
+        if ref_message.author == self.msg.author and not any(
+            r.id == role_id for r in msg_author_roles
         ):
             logger.debug("[DEBUG _ref] El autor responde a su propio mensaje → ignorar")
             return
 
         # ¿Tiene el usuario original el rol protegido?
         author_roles = getattr(ref_message.author, "roles", [])
-        has_role = any(r.id == role_id for r in author_roles) or discord.utils.get(
-            self.msg.author.roles, id=role_id
+        has_role = any(r.id == role_id for r in author_roles) or any(
+            r.id == role_id for r in msg_author_roles
         )
         logger.debug(
             f"[DEBUG _ref] Roles del autor original: {[r.name for r in author_roles]} | Buscando rol {role_id} → {has_role}"
@@ -619,33 +675,36 @@ class Message:
             )
 
         # ── Misconduct (texto) ────────────────────────────────────────────
-        logger.debug("[DEBUG _ref] Evaluando misconduct en el texto...")
-        misconduct = await self.Misconduct(GROQ_CLIENT)
-        if misconduct:
-            code = generate_code()
-            if not discord.utils.get(self.msg.author.roles, id=role_id):
-                chain_log = get_chain_log()
-                chain_log.add_alert(
-                    str(self.msg.author.id),
-                    code,
-                    "Msg INA. [to {}]".format(ref_message.author.mention),
-                    self.msg.jump_url,
+        if do_misconduct:
+            logger.debug("[DEBUG _ref] Evaluando misconduct en el texto...")
+            misconduct = await self.Misconduct(GROQ_CLIENT)
+            if misconduct:
+                code = generate_code()
+                if not discord.utils.get(self.msg.author.roles, id=role_id):
+                    chain_log = get_chain_log()
+                    chain_log.add_alert(
+                        str(self.msg.author.id),
+                        code,
+                        "Msg INA. [to {}]".format(ref_message.author.mention),
+                        self.msg.jump_url,
+                    )
+                results.append(
+                    (
+                        code,
+                        "❗ Mensaje inapropiado",
+                        f"{reference}\n**Contenido:**\n```{self.msg.content}```",
+                        None,
+                    )
                 )
-            results.append(
-                (
-                    code,
-                    "❗ Mensaje inapropiado",
-                    f"{reference}\n**Contenido:**\n```{self.msg.content}```",
-                    None,
-                )
-            )
+            else:
+                logger.debug("[DEBUG _ref] No se detectó misconduct")
         else:
-            logger.debug("[DEBUG _ref] No se detectó misconduct")
+            logger.debug("[DEBUG _ref] Misconduct diferido al buffer por lotes")
 
-        return results if results else None
+        return results
 
     async def _mention_user(
-        self, mentioned_users, role_id, GROQ_CLIENT, vt_api_key, session
+        self, mentioned_users, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True
     ):
         """
         Recibe la lista de objetos User/Member ya resuelta por Discord (message.mentions).
@@ -672,8 +731,26 @@ class Message:
         # Lista acumuladora: se ejecutan TODOS los checks antes de devolver
         results: list = []
 
-        # ── Adjuntos multimedia ───────────────────────────────────────────
+        # ── Adjuntos ──────────────────────────────────────────────────────
         if self.msg.attachments:
+            # Audio: transcribir el primero encontrado
+            audio_att = next(
+                (
+                    a
+                    for a in self.msg.attachments
+                    if a.content_type and a.content_type.startswith("audio/")
+                ),
+                None,
+            )
+            if audio_att:
+                logger.debug("[MENTION] Audio detectado, transcribiendo...")
+                transcription = await self.transcribe_audio(
+                    GROQ_CLIENT, protected_mentions[0]
+                )
+                if transcription:
+                    results.append(transcription)
+
+            # Multimedia: imagen / video / archivo
             media_atts = [
                 a
                 for a in self.msg.attachments
@@ -725,29 +802,32 @@ class Message:
             )
 
         # ── Misconduct (texto) ────────────────────────────────────────────
-        logger.info(
-            f"[MENTION] Analizando misconduct de {self.msg.author} "
-            f"hacia protegidos: {[str(m) for m in protected_mentions]}"
-        )
-        misconduct = await self.Misconduct(GROQ_CLIENT)
-        logger.info(f"[MENTION] Resultado misconduct: {misconduct}")
-        if misconduct:
-            code = generate_code()
-            if not discord.utils.get(self.msg.author.roles, id=role_id):
-                chain_log = get_chain_log()
-                chain_log.add_alert(
-                    str(self.msg.author.id),
-                    code,
-                    "Msg INA. [mentions to ...]",
-                    self.msg.jump_url,
-                )
-            results.append(
-                (
-                    code,
-                    "❗ Mensaje inapropiado",
-                    f"Protegidos: {protegidos_str}\n**Contenido:**\n```{self.msg.content}```",
-                    None,
-                )
+        if do_misconduct:
+            logger.info(
+                f"[MENTION] Analizando misconduct de {self.msg.author} "
+                f"hacia protegidos: {[str(m) for m in protected_mentions]}"
             )
+            misconduct = await self.Misconduct(GROQ_CLIENT)
+            logger.info(f"[MENTION] Resultado misconduct: {misconduct}")
+            if misconduct:
+                code = generate_code()
+                if not discord.utils.get(self.msg.author.roles, id=role_id):
+                    chain_log = get_chain_log()
+                    chain_log.add_alert(
+                        str(self.msg.author.id),
+                        code,
+                        "Msg INA. [mentions to ...]",
+                        self.msg.jump_url,
+                    )
+                results.append(
+                    (
+                        code,
+                        "❗ Mensaje inapropiado",
+                        f"Protegidos: {protegidos_str}\n**Contenido:**\n```{self.msg.content}```",
+                        None,
+                    )
+                )
+        else:
+            logger.debug("[MENTION] Misconduct diferido al buffer por lotes")
 
-        return results if results else None
+        return results
