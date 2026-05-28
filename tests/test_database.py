@@ -1,7 +1,9 @@
 import sqlite3 as sql
+from pathlib import Path
 
 import pytest
 
+import modules.database as db
 from modules.database import (
     backup_db,
     insert_row,
@@ -10,13 +12,16 @@ from modules.database import (
     try_read_row,
 )
 
+REAL_DB = Path(__file__).parent.parent / "data" / "settings.db"
+
 
 @pytest.fixture(autouse=True)
 def _isolate_db(monkeypatch, tmp_path):
     test_db = tmp_path / "settings.db"
     test_backup = tmp_path / "backups"
-    monkeypatch.setattr("modules.database.DB_PATH", test_db)
-    monkeypatch.setattr("modules.database.BACKUP_DIR", test_backup)
+    monkeypatch.setattr(db, "DB_PATH", test_db)
+    monkeypatch.setattr(db, "BACKUP_DIR", test_backup)
+    assert test_db != REAL_DB, "Nunca debe usar la DB real"
 
 
 def test_create_table(tmp_path):
