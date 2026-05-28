@@ -93,7 +93,9 @@ class Krorus(commands.Bot):
         self._rate_limit_until: float = 0
         self._rate_limit_lock = asyncio.Lock()
         # Buffer de mensajes (sala de espera) para análisis por lotes con Groq
-        self._msg_buffer: dict[int, dict] = {}  # channel_id -> {user_id, messages, task}
+        self._msg_buffer: dict[
+            int, dict
+        ] = {}  # channel_id -> {user_id, messages, task}
         self._buffer_lock = asyncio.Lock()
         self._buffer_flush_delay: int = 60
 
@@ -113,7 +115,9 @@ class Krorus(commands.Bot):
     def check_rate_limit(self, action: str = "general") -> bool:
         """Verifica si esta rate-limited. Devuelve True si puede proceder."""
         if time.time() < self._rate_limit_until:
-            logger.warning(f"[RATE LIMIT] {action}: bloqueado hasta {self._rate_limit_until}")
+            logger.warning(
+                f"[RATE LIMIT] {action}: bloqueado hasta {self._rate_limit_until}"
+            )
             return False
         return True
 
@@ -146,9 +150,7 @@ class Krorus(commands.Bot):
             self._msg_buffer[channel_id] = {
                 "user_id": message.author.id,
                 "messages": [message],
-                "task": asyncio.create_task(
-                    self._buffer_auto_flush(channel_id)
-                ),
+                "task": asyncio.create_task(self._buffer_auto_flush(channel_id)),
             }
 
     async def _buffer_try_flush(self, message: discord.Message):
@@ -202,7 +204,7 @@ class Krorus(commands.Bot):
                         )
                         break
 
-                alert_text = "\n\n".join(
+                alert_text = "\n".join(
                     f"**{m.created_at.strftime('%H:%M')}:** {m.content}"
                     for m in messages
                 )
@@ -315,7 +317,9 @@ class Krorus(commands.Bot):
             logger.exception(f"No se pudo crear session HTTP: {e}")
 
         # Inicializar configuracion desde archivo
-        self.bot_config = BOT_CONFIG.copy() if isinstance(BOT_CONFIG, dict) else DEFAULTS.copy()
+        self.bot_config = (
+            BOT_CONFIG.copy() if isinstance(BOT_CONFIG, dict) else DEFAULTS.copy()
+        )
         logger.info("[SETUP] bot_config inicializado.")
 
     async def close(self) -> None:
@@ -460,7 +464,11 @@ class Krorus(commands.Bot):
                     for code, alert, details, file in results:
                         await self._send_alert(message, code, alert, details, file)
             # Buffer solo si hay un protegido involucrado y el texto es analizable
-            if results is not None and message.content.strip() and await msg._has_analyzable_text():
+            if (
+                results is not None
+                and message.content.strip()
+                and await msg._has_analyzable_text()
+            ):
                 await self._buffer_add(message)
             return
 
@@ -485,9 +493,26 @@ class Krorus(commands.Bot):
                     for code, alert, details, file in results:
                         await self._send_alert(message, code, alert, details, file)
             # Buffer solo si hay un protegido involucrado y el texto es analizable
-            if results is not None and message.content.strip() and await msg._has_analyzable_text():
+            if (
+                results is not None
+                and message.content.strip()
+                and await msg._has_analyzable_text()
+            ):
                 await self._buffer_add(message)
-            return
+
+            # Si se mencionó a un protegido, salir (ya procesado)
+            if results is not None:
+                return
+
+            # No se mencionó a ningún protegido → solo procesar si el autor es protegido
+            mention_author = message.author
+            if not isinstance(mention_author, discord.Member):
+                mention_author = message.guild.get_member(mention_author.id)
+            if not mention_author or not discord.utils.get(
+                mention_author.roles, id=PROTECTED_ROLE_ID
+            ):
+                return
+            # Autor es protegido → cae a sección 3 para análisis completo
 
         # 3. Solo se procesa si el autor es un usuario protegido
         member = message.author
@@ -537,7 +562,6 @@ class Krorus(commands.Bot):
 
         # Manejo de archivos adjuntos
         if message.attachments:
-
             if not self.get_config("log_multimedia", True):
                 logger.debug("[CONFIG] Registro de multimedia deshabilitado.")
                 return
@@ -559,18 +583,28 @@ class Krorus(commands.Bot):
                             await self._send_alert(
                                 message, code, title, details, file=audio_file
                             )
-                elif ct.startswith(("image/", "video/", "file/")) or ct.startswith("application/"):
+                elif ct.startswith(("image/", "video/", "file/")) or ct.startswith(
+                    "application/"
+                ):
                     media_atts.append(att)
 
-            logger.info(f"[EXIF] Attachments: {len(message.attachments)}, Media: {len(media_atts)}")
+            logger.info(
+                f"[EXIF] Attachments: {len(message.attachments)}, Media: {len(media_atts)}"
+            )
 
             if media_atts:
                 if self.get_config("check_exif_metadata", True):
                     for att in media_atts:
-                        logger.info(f"[EXIF] Checking: {att.filename}, content_type: {att.content_type}")
+                        logger.info(
+                            f"[EXIF] Checking: {att.filename}, content_type: {att.content_type}"
+                        )
                         exif_report = await msg.check_exif_sensible(att)
                         if exif_report and exif_report.has_sensitive_data:
-                            risk_level = "🚨 ALTO RIESGO" if exif_report.has_high_risk else "⚠️ Riesgo"
+                            risk_level = (
+                                "🚨 ALTO RIESGO"
+                                if exif_report.has_high_risk
+                                else "⚠️ Riesgo"
+                            )
                             await self._send_alert(
                                 message,
                                 "",
@@ -667,9 +701,11 @@ class Krorus(commands.Bot):
 
     async def check_voice_channels(self, guild: discord.Guild, target_role_id: int):
         protected_in_vc = [
-            m for m in guild.members
+            m
+            for m in guild.members
             if discord.utils.get(m.roles, id=target_role_id)
-            and m.voice and m.voice.channel
+            and m.voice
+            and m.voice.channel
         ]
         if not protected_in_vc:
             return
@@ -682,12 +718,14 @@ class Krorus(commands.Bot):
             checked.add(vc.id)
 
             others = [
-                m for m in vc.members
+                m
+                for m in vc.members
                 if not discord.utils.get(m.roles, id=target_role_id)
             ]
             if others:
                 protegidos = [
-                    m for m in vc.members
+                    m
+                    for m in vc.members
                     if discord.utils.get(m.roles, id=target_role_id)
                 ]
                 await self._send_alert(

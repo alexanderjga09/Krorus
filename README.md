@@ -148,7 +148,7 @@ Todos los comandos son **slash commands** (se escriben con `/`). Salvo `/whisper
 | `/append-alertdomain` | Agrega un dominio a la lista de alertas. Cualquier enlace con ese dominio generará una alerta directa. | `/append-alertdomain [dominio]` | Administrador |
 | `/remove-alert-domain` | Elimina un dominio de la lista de alertas. | `/remove-alert-domain [dominio]` | Administrador |
 | `/view-alert-domains` | Muestra todos los dominios de la lista de alertas con paginación (orden alfabético). | `/view-alert-domains` | Administrador |
-| `/append-whitelist` | Agrega un dominio a la lista blanca. Los enlaces con ese dominio no serán analizados. | `/append-whitelist [dominio]` | Administrador |
+| `/append-whitelist` | Agrega un dominio a la lista blanca. Los mensajes que contengan **solo** URLs de dominios whitelisted se omiten del análisis de IA y de VirusTotal. | `/append-whitelist [dominio]` | Administrador |
 | `/remove-whitelist-domain` | Elimina un dominio de la lista blanca. | `/remove-whitelist-domain [dominio]` | Administrador |
 | `/view-whitelist` | Muestra todos los dominios de la lista blanca con paginación (orden alfabético). | `/view-whitelist` | Administrador |
 
