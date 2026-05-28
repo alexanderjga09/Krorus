@@ -129,11 +129,28 @@ class Krorus(commands.Bot):
 
     # ── Sistema de buffer/sala de espera para Groq ────────────────────────
 
-    async def _buffer_add(self, message: discord.Message):
+    async def _buffer_add(self, message: discord.Message, lookback: bool = False):
         """Buffer de mensajes: acumula texto de usuarios protegidos hasta
-        que otro usuario hable en el canal o pasen 60s sin actividad."""
+        que otro usuario hable en el canal o pasen 60s sin actividad.
+        Si lookback=True, busca mensajes recientes del mismo autor (≤60s)
+        que no fueron capturados (ej: anteriores a una mención) y los incluye."""
+        channel_id = message.channel.id
+
+        recent_msgs: list[discord.Message] = []
+        if lookback:
+            try:
+                import datetime
+                cutoff = message.created_at - datetime.timedelta(seconds=60)
+                async for msg in message.channel.history(
+                    before=message, after=cutoff, limit=15
+                ):
+                    if msg.author.id == message.author.id and not msg.author.bot:
+                        recent_msgs.append(msg)
+                recent_msgs.reverse()
+            except Exception:
+                pass
+
         async with self._buffer_lock:
-            channel_id = message.channel.id
             if channel_id in self._msg_buffer:
                 info = self._msg_buffer[channel_id]
                 if info["user_id"] == message.author.id:
@@ -149,9 +166,14 @@ class Krorus(commands.Bot):
 
             self._msg_buffer[channel_id] = {
                 "user_id": message.author.id,
-                "messages": [message],
+                "messages": [*recent_msgs, message],
                 "task": asyncio.create_task(self._buffer_auto_flush(channel_id)),
             }
+
+    def _buffer_has_active(self, channel_id: int, user_id: int) -> bool:
+        """Chequeo rápido (sin lock) si un usuario tiene buffer activo en un canal."""
+        info = self._msg_buffer.get(channel_id)
+        return info is not None and info["user_id"] == user_id
 
     async def _buffer_try_flush(self, message: discord.Message):
         """Intenta flushear el buffer si otro usuario (no el dueño) habla."""
@@ -469,7 +491,7 @@ class Krorus(commands.Bot):
                 and message.content.strip()
                 and await msg._has_analyzable_text()
             ):
-                await self._buffer_add(message)
+                await self._buffer_add(message, lookback=True)
             return
 
         # 2. Menciones a usuarios protegidos
@@ -498,7 +520,7 @@ class Krorus(commands.Bot):
                 and message.content.strip()
                 and await msg._has_analyzable_text()
             ):
-                await self._buffer_add(message)
+                await self._buffer_add(message, lookback=True)
 
             # Si se mencionó a un protegido, salir (ya procesado)
             if results is not None:
@@ -522,6 +544,15 @@ class Krorus(commands.Bot):
                 return
 
         if not discord.utils.get(member.roles, id=PROTECTED_ROLE_ID):
+            # No es protegido, pero si tiene un buffer activo (por mención/reply
+            # reciente a un protegido), sus mensajes posteriores también se acumulan
+            if (
+                self._buffer_has_active(message.channel.id, message.author.id)
+                and message.content.strip()
+            ):
+                msg = Message(message)
+                if await msg._has_analyzable_text():
+                    await self._buffer_add(message)
             return
 
         ignore_cog = self.get_cog("AppendIgnoreWord")
