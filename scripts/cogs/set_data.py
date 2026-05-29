@@ -2,7 +2,7 @@ import discord
 from discord import default_permissions
 from discord.ext import commands
 
-from scripts.modules.database import insert_row
+from ..modules.database import insert_row
 
 
 class SetData(commands.Cog):

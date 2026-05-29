@@ -1,3 +1,4 @@
+import asyncio
 import io
 import logging
 import zipfile
@@ -142,31 +143,6 @@ def _extract_exif_data(image_data: bytes) -> dict:
         return {}
 
 
-def _convert_gps_decimal(gps_info: dict) -> tuple | None:
-    """Convierte coordenadas GPS a formato decimal para verificación."""
-    try:
-        lat_ref = gps_info.get("GPSLatitudeRef", "N")
-        lon_ref = gps_info.get("GPSLongitudeRef", "E")
-        lat = gps_info.get("GPSLatitude")
-        lon = gps_info.get("GPSLongitude")
-
-        if not lat or not lon:
-            return None
-
-        def to_decimal(coords, ref):
-            degrees = coords[0]
-            minutes = coords[1]
-            seconds = coords[2]
-            decimal = degrees + minutes / 60 + seconds / 3600
-            if ref in ("S", "W"):
-                decimal = -decimal
-            return decimal
-
-        return (to_decimal(lat, lat_ref), to_decimal(lon, lon_ref))
-    except Exception:
-        return None
-
-
 def _format_value(value) -> str:
     """Formatea un valor EXIF para presentación."""
     if isinstance(value, (tuple, list)):
@@ -283,3 +259,17 @@ def check_archive_exif(
         )
 
     return ArchiveExifReport(archive_filename=filename)
+
+
+async def check_archive_exif_async(
+    file_data: bytes,
+    filename: str,
+    content_type: str | None = None,
+) -> ArchiveExifReport:
+    """
+    Versión asincrónica de check_archive_exif.
+    Ejecuta PIL/open y zipfile en un thread para no bloquear el event loop.
+    """
+    return await asyncio.to_thread(
+        check_archive_exif, file_data, filename, content_type
+    )

@@ -210,13 +210,20 @@ class BotSetupApp:
             / ("pip.exe" if sys.platform == "win32" else "pip")
         )
 
+    def _escape_env_val(self, val: str | None) -> str:
+        if val is None:
+            return ""
+        v = str(val).strip()
+        v = v.replace("\\", "\\\\").replace('"', '\\"')
+        return v
+
     def _build_env_content(self) -> str:
         """Construye el contenido del archivo .env con los valores actuales."""
         return (
-            f'TOKEN="{self.token_entry.value}"\n'
-            f'GROQ_API_KEY="{self.groq_entry.value}"\n'
-            f'VIRUSTOTAL_API_KEY="{self.vt_entry.value}"\n'
-            f'ALLOWED_GUILD_ID="{self.guild_entry.value}"'
+            f'TOKEN="{self._escape_env_val(self.token_entry.value)}"\n'
+            f'GROQ_API_KEY="{self._escape_env_val(self.groq_entry.value)}"\n'
+            f'VIRUSTOTAL_API_KEY="{self._escape_env_val(self.vt_entry.value)}"\n'
+            f'ALLOWED_GUILD_ID="{self._escape_env_val(self.guild_entry.value)}"'
         )
 
     def _validate_fields(self) -> str | None:

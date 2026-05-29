@@ -8,7 +8,7 @@ import re
 import time
 import unicodedata
 from pathlib import Path
-from urllib.parse import urlparse
+from urllib.parse import unquote, urlparse
 
 import aiohttp
 import discord
@@ -16,10 +16,7 @@ import groq
 
 from .chainlog import get_chain_log
 from .code import generate_code
-from .exif_checker import (
-    ArchiveExifReport,
-    check_archive_exif,
-)
+from .exif_checker import ArchiveExifReport
 
 # Regex para eliminar caracteres Unicode invisibles/de formato antes de análisis
 _INVISIBLE_RE = re.compile(
@@ -36,6 +33,7 @@ logger = logging.getLogger(__name__)
 
 vt_semaphore = asyncio.Semaphore(4)
 _JSON_CACHE = {}
+_JSON_CACHE_MAX = 128
 
 
 class GroqRateLimiter:
@@ -124,7 +122,11 @@ class Message:
         Soporta imágenes directas y archivos ZIP que contengan imágenes.
         Devuelve un reporte si se encuentran datos sensibles, None en caso contrario.
         """
-        from .exif_checker import ARCHIVE_EXTENSIONS, IMAGE_EXTENSIONS
+        from .exif_checker import (
+            ARCHIVE_EXTENSIONS,
+            IMAGE_EXTENSIONS,
+            check_archive_exif_async,
+        )
 
         ext = Path(attachment.filename).suffix.lower().lstrip(".")
         is_image = (
@@ -146,7 +148,7 @@ class Message:
         try:
             file_data = await attachment.read()
 
-            report = check_archive_exif(file_data, attachment.filename, attachment.content_type)
+            report = await check_archive_exif_async(file_data, attachment.filename, attachment.content_type)
 
             if report.has_sensitive_data or report.has_high_risk:
                 logger.info(
@@ -182,15 +184,18 @@ class Message:
             data = js.loads(content)
             if isinstance(data, list):
                 _JSON_CACHE[filename] = {"hash": content_hash, "data": data}
-                return data
             else:
                 logger.warning(f"Formato JSON inesperado en {path}: {type(data)}")
                 _JSON_CACHE[filename] = {"hash": content_hash, "data": []}
-                return []
+                data = []
         except js.JSONDecodeError as e:
             logger.warning(f"Error JSON en {path}: {e}")
             _JSON_CACHE[filename] = {"hash": content_hash, "data": []}
-            return []
+            data = []
+
+        if len(_JSON_CACHE) > _JSON_CACHE_MAX:
+            _JSON_CACHE.clear()
+        return data
 
     async def _has_analyzable_text(self) -> bool:
         content = self.msg.content or ""
@@ -245,8 +250,6 @@ class Message:
                 if parsed.fragment:
                     combined += "#" + parsed.fragment
                 if combined:
-                    from urllib.parse import unquote
-
                     decoded = unquote(combined)
                     if re.search(r"[A-Za-zÀ-ÖØ-öø-ÿ]", decoded):
                         return True
@@ -438,7 +441,7 @@ class Message:
 
             reference = (
                 f"Mandado a: {member.mention}"
-                if self.msg.author.id != member.id
+                if member is not None and self.msg.author.id != member.id
                 else ""
             )
             return (

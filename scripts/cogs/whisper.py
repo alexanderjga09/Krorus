@@ -3,9 +3,11 @@ import logging
 import discord
 from discord.ext import commands
 
-from scripts.modules.rsa import decrypt_message, encrypt_message
+from ..modules.rsa import decrypt_message, encrypt_message
 
 logger = logging.getLogger(__name__)
+
+_MAX_WHISPER_LENGTH = 2000
 
 
 class DecryptButton(discord.ui.View):
@@ -13,11 +15,18 @@ class DecryptButton(discord.ui.View):
         super().__init__(timeout=180)
         self.encrypted_message = encrypted_message
         self.recipient_id = recipient_id
+        self._unlocked = False
 
     @discord.ui.button(label="Descifrar Mensaje", style=discord.ButtonStyle.primary)
     async def decrypt_callback(
         self, button: discord.ui.Button, interaction: discord.Interaction
     ) -> None:
+        if self._unlocked:
+            await interaction.response.send_message(
+                "Este mensaje ya fue descifrado.", ephemeral=True
+            )
+            return
+
         if interaction.user.id != self.recipient_id:
             await interaction.response.send_message(
                 "No tienes permiso para descifrar este mensaje.", ephemeral=True
@@ -31,6 +40,7 @@ class DecryptButton(discord.ui.View):
             await interaction.response.send_message(
                 f"**Mensaje secreto:**\n{decrypted_text}", ephemeral=True
             )
+            self._unlocked = True
             button.disabled = True
             await interaction.edit_original_response(view=self)
         except Exception:
@@ -56,10 +66,27 @@ class Whisper(commands.Cog):
         self,
         ctx: discord.ApplicationContext,
         destinatario: discord.Option(
-            discord.SlashCommandOptionType.user, "El usuario que podra leer el mensaje."
-        ),
-        mensaje: discord.Option(str, "El mensaje secreto que quieres enviar."),
+            discord.SlashCommandOptionType.user,
+            description="El usuario que podra leer el mensaje.",
+        ) = None,
+        mensaje: discord.Option(
+            str,
+            description="El mensaje secreto que quieres enviar.",
+        ) = "",
     ) -> None:
+        if not mensaje:
+            await ctx.respond("El mensaje no puede estar vacio.", ephemeral=True)
+            return
+
+        if len(mensaje) > _MAX_WHISPER_LENGTH:
+            await ctx.respond(
+                f"El mensaje es demasiado largo. Maximo {_MAX_WHISPER_LENGTH} caracteres.",
+                ephemeral=True,
+            )
+            return
+
+        await ctx.defer(ephemeral=True)
+
         if destinatario is None:
             destinatario = ctx.author
 
@@ -80,16 +107,14 @@ class Whisper(commands.Cog):
             view = DecryptButton(encrypted_msg, destinatario.id)
             await destinatario.send(embed=embed, view=view)
         except discord.Forbidden:
-            await ctx.respond(
-                f"No puedo enviar mensajes directos a {destinatario.mention}. Asegurate de que sus DMs esten abiertos.",
-                ephemeral=True,
+            await ctx.edit(
+                content=f"No puedo enviar mensajes directos a {destinatario.mention}. Asegurate de que sus DMs esten abiertos."
             )
             return
         except Exception as e:
             logger.exception(f"Error enviando whisper a {destinatario.id}: {e}")
-            await ctx.respond(
-                "Ocurrio un error al enviar el mensaje secreto.",
-                ephemeral=True,
+            await ctx.edit(
+                content="Ocurrio un error al enviar el mensaje secreto."
             )
             return
 
@@ -97,10 +122,10 @@ class Whisper(commands.Cog):
             await self.client._send_alert(
                 ctx.author.mention,
                 "",
-                "Mensaje secreto",
+                "\u200bMensaje secreto",
                 f"**Destinatario:** {destinatario.mention}\n```{mensaje}```",
             )
 
-        await ctx.respond(
-            f"Mensaje secreto enviado a {destinatario.mention}.", ephemeral=True
+        await ctx.edit(
+            content=f"Mensaje secreto enviado a {destinatario.mention}."
         )

@@ -15,7 +15,6 @@ def test_import_code():
     from modules import code
     assert code is not None
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Rust modules may not be built")
 def test_import_chainlog_with_rust():
     """Test chainlog with Rust bindings (skip if not available)"""
     try:
@@ -24,7 +23,6 @@ def test_import_chainlog_with_rust():
     except ImportError:
         pytest.skip("Rust bindings not available")
 
-@pytest.mark.skipif(sys.platform == "win32", reason="Rust modules may not be built")
 def test_import_exif_checker_with_rust():
     """Test exif_checker with Rust bindings (skip if not available)"""
     try:

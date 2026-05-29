@@ -394,11 +394,13 @@ impl ChainLog {
         data: &serde_json::Value,
         previous_hash: &str,
     ) -> String {
+        let block_type = data.get("block_type").and_then(|v| v.as_str()).unwrap_or("unknown");
         let block_obj = serde_json::json!({
             "index": index,
             "timestamp": timestamp,
             "data": data,
             "previous_hash": previous_hash,
+            "block_type": block_type,
         });
         let block_str = serde_json::to_string(&block_obj).unwrap();
         let mut hasher = Sha256::new();

@@ -5,6 +5,7 @@ use std::io::Cursor;
 const IMAGE_EXTENSIONS: &[&str] = &["jpg", "jpeg", "tif", "tiff", "webp"];
 
 const SENSITIVE_EXIF_FIELDS: &[(&str, &str)] = &[
+    ("GPSInfo", "Información GPS detectada"),
     ("GPSLatitude", "Latitud GPS encontrada"),
     ("GPSLongitude", "Longitud GPS encontrada"),
     ("GPSLatitudeRef", "Referencia de latitud GPS"),
@@ -35,6 +36,7 @@ const SENSITIVE_EXIF_FIELDS: &[(&str, &str)] = &[
 ];
 
 const HIGH_RISK_FIELDS: &[&str] = &[
+    "GPSInfo",
     "GPSLatitude",
     "GPSLongitude",
     "GPSLatitudeRef",

@@ -1,8 +1,10 @@
 import asyncio
+import datetime
 import hashlib
 import json
 import logging
 import os
+import threading
 import time
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -91,13 +93,16 @@ class Krorus(commands.Bot):
         self.http_session: aiohttp.ClientSession | None = None
         self.bot_config: dict = {}
         self._rate_limit_until: float = 0
-        self._rate_limit_lock = asyncio.Lock()
+        self._rate_limit_lock = threading.Lock()
         # Buffer de mensajes (sala de espera) para análisis por lotes con Groq
         self._msg_buffer: dict[
             int, dict
         ] = {}  # channel_id -> {user_id, messages, task}
         self._buffer_lock = asyncio.Lock()
+        self._data_lock = asyncio.Lock()
         self._buffer_flush_delay: int = 60
+        self.staff_channel_id: int = STAFF_CHANNEL_ID
+        self.protected_role_id: int = PROTECTED_ROLE_ID
 
     def get_config(self, key: str, default=None):
         """Lee un valor de configuracion. Siempre refleja el estado actual."""
@@ -114,11 +119,12 @@ class Krorus(commands.Bot):
 
     def check_rate_limit(self, action: str = "general") -> bool:
         """Verifica si esta rate-limited. Devuelve True si puede proceder."""
-        if time.time() < self._rate_limit_until:
-            logger.warning(
-                f"[RATE LIMIT] {action}: bloqueado hasta {self._rate_limit_until}"
-            )
-            return False
+        with self._rate_limit_lock:
+            if time.time() < self._rate_limit_until:
+                logger.warning(
+                    f"[RATE LIMIT] {action}: bloqueado hasta {self._rate_limit_until}"
+                )
+                return False
         return True
 
     def set_rate_limit(self, seconds: int, reason: str = ""):
@@ -139,7 +145,6 @@ class Krorus(commands.Bot):
         recent_msgs: list[discord.Message] = []
         if lookback:
             try:
-                import datetime
                 cutoff = message.created_at - datetime.timedelta(seconds=60)
                 async for msg in message.channel.history(
                     before=message, after=cutoff, limit=15
@@ -196,13 +201,15 @@ class Krorus(commands.Bot):
         if not messages:
             return
         try:
+            # Ordenar cronológicamente por created_at
+            sorted_msgs = sorted(messages, key=lambda m: m.created_at)
             parts = []
-            for msg in messages:
+            for msg in sorted_msgs:
                 ts = msg.created_at.strftime("%H:%M")
                 parts.append(f"[{ts}] {msg.content}")
             combined_text = "\n".join(parts)
 
-            last_msg = messages[-1]
+            last_msg = sorted_msgs[-1]
             msg_obj = Message(last_msg)
             misconduct = await msg_obj.Misconduct(
                 GROQ_CLIENT,
@@ -212,7 +219,7 @@ class Krorus(commands.Bot):
             if misconduct:
                 code = generate_code()
                 # Chain log si algún autor no es protegido
-                for m in messages:
+                for m in sorted_msgs:
                     member = m.guild.get_member(m.author.id)
                     if member and not discord.utils.get(
                         member.roles, id=PROTECTED_ROLE_ID
@@ -228,7 +235,7 @@ class Krorus(commands.Bot):
 
                 alert_text = "\n".join(
                     f"**{m.created_at.strftime('%H:%M')}:** {m.content}"
-                    for m in messages
+                    for m in sorted_msgs
                 )
                 await self._send_alert(
                     last_msg,
@@ -321,12 +328,21 @@ class Krorus(commands.Bot):
         """Recarga STAFF_CHANNEL_ID y PROTECTED_ROLE_ID desde la BD sin reiniciar."""
         global STAFF_CHANNEL_ID, PROTECTED_ROLE_ID
         row = read_row()
-        # read_row devuelve una lista de tuplas, por ejemplo [(staff_channel, role_id)]
         try:
-            STAFF_CHANNEL_ID = row[0][0]
-            PROTECTED_ROLE_ID = row[0][1]
+            new_staff = row[0][0]
+            new_role = row[0][1]
         except Exception:
-            STAFF_CHANNEL_ID, PROTECTED_ROLE_ID = 0, 0
+            new_staff, new_role = 0, 0
+
+        STAFF_CHANNEL_ID = new_staff
+        PROTECTED_ROLE_ID = new_role
+        self.staff_channel_id = new_staff
+        self.protected_role_id = new_role
+
+        whisper_cog = self.get_cog("Whisper")
+        if whisper_cog:
+            whisper_cog.bd = (new_staff, new_role)
+
         logger.info(
             f"[RELOAD] Datos recargados: canal={STAFF_CHANNEL_ID}, rol={PROTECTED_ROLE_ID}"
         )
