@@ -21,6 +21,7 @@ env/
 data/alert_domains.json
 data/ignorewords.json
 data/logs.json
+data/misconduct_cache.json
 logs.json
 backups/
 

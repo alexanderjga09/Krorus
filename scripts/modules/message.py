@@ -77,8 +77,30 @@ def _save_misconduct_cache(cache: dict[str, dict]) -> None:
         logger.warning(f"[Cache] Error guardando misconduct_cache.json: {e}")
 
 
+def get_misconduct_cache_stats() -> dict:
+    """Devuelve estadísticas del cache de Groq."""
+    return {
+        "size": len(_MISCONDUCT_CACHE),
+        "max_size": _MISCONDUCT_CACHE_MAX,
+        "ttl_seconds": _MISCONDUCT_CACHE_TTL,
+        "hits": _MISCONDUCT_CACHE_HITS,
+        "misses": _MISCONDUCT_CACHE_MISSES,
+    }
+
+
+def clear_misconduct_cache() -> None:
+    """Limpia el cache de Groq en memoria y disco."""
+    global _MISCONDUCT_CACHE, _MISCONDUCT_CACHE_HITS, _MISCONDUCT_CACHE_MISSES
+    _MISCONDUCT_CACHE = {}
+    _MISCONDUCT_CACHE_HITS = 0
+    _MISCONDUCT_CACHE_MISSES = 0
+    _save_misconduct_cache({})
+
+
 # Inicializar cache persistente al importar el módulo
 _MISCONDUCT_CACHE = _load_misconduct_cache()
+_MISCONDUCT_CACHE_HITS = 0
+_MISCONDUCT_CACHE_MISSES = 0
 
 
 class GroqRateLimiter:
@@ -520,11 +542,14 @@ class Message:
             text_to_analyze = Message._normalize_for_groq(self.msg.content.strip())
 
         cache_key = hashlib.sha256(text_to_analyze.encode()).hexdigest()
+        global _MISCONDUCT_CACHE_HITS, _MISCONDUCT_CACHE_MISSES
         cached = _MISCONDUCT_CACHE.get(cache_key)
         now = time.time()
         if cached is not None and now - cached["ts"] < _MISCONDUCT_CACHE_TTL:
+            _MISCONDUCT_CACHE_HITS += 1
             logger.debug(f"[Groq] Cache hit: {text_to_analyze[:60]}... -> {cached['result']}")
             return cached["result"]
+        _MISCONDUCT_CACHE_MISSES += 1
 
         async def _call_groq() -> bool | None:
             """Llama a Groq. Retorna True/False en éxito, None en error transitorio."""

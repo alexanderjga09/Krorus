@@ -151,10 +151,41 @@ class BotSetupApp:
         self.switch_detailed_logging = None
         self.switch_check_exif = None
 
+        # Cache de Groq
+        self.cache_hits_text = ft.Text("—", size=13)
+        self.cache_misses_text = ft.Text("—", size=13)
+        self.cache_size_text = ft.Text("—", size=13)
+        self.refresh_cache_btn = ft.Button("Refrescar", icon=ft.Icons.REFRESH, on_click=self._refresh_cache_stats)
+        self.clear_cache_btn = ft.Button("Limpiar", icon=ft.Icons.DELETE, on_click=self._clear_cache, disabled=True)
+
+        # Theme toggle
+        self.theme_switch = ft.Switch(label="Modo claro", value=False, on_change=self._toggle_theme)
+
+        # Bot status
+        self.bot_uptime_text = ft.Text("—", size=13)
+        self.bot_pid_text = ft.Text("—", size=13)
+        self.bot_status_refresh_btn = ft.Button("↻", icon=ft.Icons.REFRESH, on_click=self._refresh_bot_status, width=40)
+
+        # Save logs
+        self.save_logs_btn = ft.IconButton(ft.Icons.SAVE, tooltip="Guardar logs", on_click=self._save_logs)
+
+        # Version indicator
+        self.version_text = ft.Text("—", size=12, color=ft.Colors.GREY, selectable=True)
+
+        # Restore backup
+        self.restore_backup_btn = ft.Button("Restaurar respaldo", icon=ft.Icons.RESTORE, on_click=self._restore_backup, disabled=True)
+
+        # Bot start time tracking
+        self._bot_start_time = None
+
         self.setup_ui()
         self._restore_last_path()
+        self.version_text.value = self._get_git_hash()
         # Limpiar procesos zombie del bot antes de cualquier cosa
         self._cleanup_zombies()
+        # Mata el proceso hijo si se cierra la ventana
+        self.page.window.prevent_close = True
+        self.page.on_window_event = self._on_window_event
         # Verificacion silenciosa de actualizaciones al abrir la GUI
         try:
             threading.Thread(target=self._startup_update_check, daemon=True).start()
@@ -601,43 +632,49 @@ class BotSetupApp:
                 self.groq_entry,
                 self.vt_entry,
                 self.guild_entry,
+                ft.Divider(),
+                ft.Text("Apariencia", size=14, weight=ft.FontWeight.W_600),
+                self.theme_switch,
+                ft.Divider(),
+                ft.Text("Base de datos", size=14, weight=ft.FontWeight.W_600),
+                ft.Row([self.restore_backup_btn]),
             ],
             scroll=ft.ScrollMode.AUTO,
         )
 
         # ── Switches de funciones ──────────────────────────────────────────
         self.switch_log_multimedia = ft.Switch(
-            label="Registrar multimedia (imagenes, videos, archivos)",
+            label="Registrar mensajes multimedia (imagenes, videos, archivos)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_transcribe_audio = ft.Switch(
-            label="Transcribir audios (usa Groq)",
+            label="Transcribir audios automaticamente (usa Groq AI)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_log_message_edits = ft.Switch(
-            label="Registrar y analizar mensajes editados",
+            label="Registrar y analizar mensajes editados en tiempo real",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_enable_whisper = ft.Switch(
-            label="Habilitar /whisper (mensajes secretos)",
+            label="Habilitar comando /whisper (mensajes secretos cifrados)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_monitor_voice = ft.Switch(
-            label="Monitorizar canales de voz (alertas de supervision)",
+            label="Monitorizar canales de voz (alertas de supervision en vivo)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_detailed_logging = ft.Switch(
-            label="Logs detallados (debug)",
+            label="Registro detallado (modo debug, informacion extendida)",
             value=False,
             on_change=self._mark_config_changed,
         )
         self.switch_check_exif = ft.Switch(
-            label="Verificar EXIF en archivos (detecta ubicacion GPS, camara, etc.)",
+            label="Verificar metadatos EXIF en archivos (GPS, camara, etc.)",
             value=True,
             on_change=self._mark_config_changed,
         )
@@ -677,6 +714,31 @@ class BotSetupApp:
                 ft.Divider(),
                 self.switch_enable_whisper,
                 reset_btn,
+                ft.Divider(),
+                ft.Text("Cache de Groq", size=14, weight=ft.FontWeight.W_600),
+                ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Text("Aciertos:", size=12, color=ft.Colors.GREY),
+                                self.cache_hits_text,
+                            ]
+                        ),
+                        ft.Column(
+                            [
+                                ft.Text("Fallos:", size=12, color=ft.Colors.GREY),
+                                self.cache_misses_text,
+                            ]
+                        ),
+                        ft.Column(
+                            [
+                                ft.Text("Tamaño:", size=12, color=ft.Colors.GREY),
+                                self.cache_size_text,
+                            ]
+                        ),
+                    ]
+                ),
+                ft.Row([self.refresh_cache_btn, self.clear_cache_btn]),
             ],
             expand=True,
             spacing=4,
@@ -687,6 +749,23 @@ class BotSetupApp:
             [
                 ft.Divider(height=20),
                 ft.Row([self.status_dot, self.status_text]),
+                ft.Row(
+                    [
+                        ft.Column(
+                            [
+                                ft.Text("Uptime:", size=12, color=ft.Colors.GREY),
+                                self.bot_uptime_text,
+                            ]
+                        ),
+                        ft.Column(
+                            [
+                                ft.Text("PID:", size=12, color=ft.Colors.GREY),
+                                self.bot_pid_text,
+                            ]
+                        ),
+                        self.bot_status_refresh_btn,
+                    ]
+                ),
                 self.progress_bar,
                 ft.Row(
                     [self.save_btn, self.setup_btn],
@@ -721,7 +800,20 @@ class BotSetupApp:
         ]
 
         self.tabs_control = self._build_tabs(tab_labels, tab_views)
-        left_panel = ft.Column([self.tabs_control])
+        left_panel = ft.Column(
+            [
+                self.tabs_control,
+                ft.Container(
+                    content=ft.Row(
+                        [
+                            ft.Icon(ft.Icons.CODE, size=14, color=ft.Colors.GREY),
+                            self.version_text,
+                        ]
+                    ),
+                    padding=ft.Padding(10, 0, 10, 10),
+                ),
+            ]
+        )
 
         self.page.add(
             ft.Row(
@@ -743,21 +835,22 @@ class BotSetupApp:
                     ft.Container(
                         content=ft.Column(
                             [
-                                ft.Row(
-                                    [
-                                        ft.Text(
-                                            "Consola de Salida",
-                                            size=18,
-                                            weight=ft.FontWeight.W_500,
-                                            expand=True,
-                                        ),
-                                        ft.IconButton(
-                                            ft.Icons.DELETE_SWEEP,
-                                            on_click=self.clear_console,
-                                            tooltip="Limpiar Consola",
-                                        ),
-                                    ]
-                                ),
+                                    ft.Row(
+                                        [
+                                            ft.Text(
+                                                "Consola de Salida",
+                                                size=18,
+                                                weight=ft.FontWeight.W_500,
+                                                expand=True,
+                                            ),
+                                            self.save_logs_btn,
+                                            ft.IconButton(
+                                                ft.Icons.DELETE_SWEEP,
+                                                on_click=self.clear_console,
+                                                tooltip="Limpiar Consola",
+                                            ),
+                                        ]
+                                    ),
                                 ft.Container(
                                     content=self.console,
                                     bgcolor=ft.Colors.BLACK,
@@ -881,6 +974,7 @@ class BotSetupApp:
             )
             self.status_text.color = ft.Colors.GREY_400
 
+        self._refresh_bot_status()
         self._safe_update()
 
     def is_process_running(self):
@@ -1051,6 +1145,7 @@ class BotSetupApp:
 
         self.clear_console(None)
         self.log("🤖 Iniciando bot...", ft.Colors.GREEN_200)
+        self._bot_start_time = time.time()
         self.run_command(
             [str(python_bin), "main.py"],
             cwd=self.project_path_text.value,
@@ -1068,22 +1163,40 @@ class BotSetupApp:
             self.log(f"⏹️ Bot detenido (Codigo: {rc})", ft.Colors.ORANGE_400)
         self.update_states()
 
-    def stop_bot(self):
-        pid = None
-        with self.process_lock:
-            if self.running_process:
-                self.log("🛑 Solicitando detencion...", ft.Colors.ORANGE_400)
-                pid = self.running_process.pid
-                if sys.platform != "win32":
-                    self.running_process.terminate()
-
-        if pid and sys.platform == "win32":
+    def _kill_process_tree(self, pid: int):
+        """Mata un proceso y todo su arbol de hijos."""
+        if sys.platform == "win32":
             subprocess.run(
                 ["taskkill", "/F", "/T", "/PID", str(pid)],
                 capture_output=True,
                 creationflags=CREATE_NO_WINDOW,
             )
+        else:
+            try:
+                subprocess.run(["kill", "-TERM", f"-{pid}"], capture_output=True)
+            except Exception:
+                subprocess.run(["kill", "-TERM", str(pid)], capture_output=True)
+
+    def _cleanup_process_ref(self):
+        """Limpia la referencia al proceso y actualiza UI."""
+        with self.process_lock:
+            if self.running_process:
+                try:
+                    if self.running_process.poll() is None:
+                        self._kill_process_tree(self.running_process.pid)
+                except Exception:
+                    pass
+                self.running_process = None
         self.update_states()
+
+    def stop_bot(self):
+        self._cleanup_process_ref()
+        self.log("🛑 Bot detenido.", ft.Colors.ORANGE_400)
+
+    async def _on_window_event(self, e):
+        if e.data == "close":
+            self._cleanup_process_ref()
+            await self.page.window_close_async()
 
     def restart_bot(self, _):
         with self._restart_lock:
@@ -1167,6 +1280,128 @@ class BotSetupApp:
                 self.update_states()
 
         threading.Thread(target=update, daemon=True).start()
+
+    # ── Cache de Groq ───────────────────────────────────────────────────
+
+    def _refresh_cache_stats(self, e=None):
+        """Actualiza las estadisticas de cache de Groq desde modules.message."""
+        try:
+            from modules.message import get_misconduct_cache_stats
+        except ImportError:
+            self.cache_hits_text.value = "N/A"
+            self.cache_misses_text.value = "N/A"
+            self.cache_size_text.value = "N/A"
+            self._safe_update()
+            return
+        try:
+            stats = get_misconduct_cache_stats()
+            self.cache_hits_text.value = str(stats.get("hits", "—"))
+            self.cache_misses_text.value = str(stats.get("misses", "—"))
+            self.cache_size_text.value = str(stats.get("size", "—"))
+            self.clear_cache_btn.disabled = False
+        except Exception as ex:
+            self.log(f"Error al obtener stats de cache: {ex}", ft.Colors.RED_400)
+        self._safe_update()
+
+    def _clear_cache(self, e):
+        """Limpia la cache de Groq."""
+        try:
+            from modules.message import clear_misconduct_cache
+
+            clear_misconduct_cache()
+            self.log("🧹 Cache de Groq limpiada.", ft.Colors.GREEN_400)
+        except Exception as ex:
+            self.log(f"Error al limpiar cache: {ex}", ft.Colors.RED_400)
+        self._refresh_cache_stats()
+
+    # ── Restore backup ──────────────────────────────────────────────────
+
+    def _restore_backup(self, e):
+        """Restaura el respaldo mas reciente de la base de datos."""
+        try:
+            from modules.database import restore_latest_backup
+        except ImportError:
+            self.log(
+                "❌ No se pudo importar restore_latest_backup", ft.Colors.RED_400
+            )
+            return
+        try:
+            restore_latest_backup()
+            self.log("✅ Respaldo restaurado correctamente.", ft.Colors.GREEN_400)
+        except Exception as ex:
+            self.log(f"❌ Error al restaurar respaldo: {ex}", ft.Colors.RED_400)
+
+    # ── Theme toggle ────────────────────────────────────────────────────
+
+    def _toggle_theme(self, e):
+        """Alterna entre modo claro y oscuro."""
+        self.page.theme_mode = (
+            ft.ThemeMode.LIGHT if e.control.value else ft.ThemeMode.DARK
+        )
+        self._safe_update()
+
+    # ── Bot status ──────────────────────────────────────────────────────
+
+    def _refresh_bot_status(self, e=None):
+        """Actualiza el uptime y PID del bot si esta en ejecucion."""
+        with self.process_lock:
+            running = (
+                self.running_process is not None
+                and self.running_process.poll() is None
+            )
+            pid = self.running_process.pid if running and self.running_process else None
+        if running and pid and self._bot_start_time:
+            uptime_secs = int(time.time() - self._bot_start_time)
+            hours = uptime_secs // 3600
+            minutes = (uptime_secs % 3600) // 60
+            seconds = uptime_secs % 60
+            self.bot_uptime_text.value = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+            self.bot_pid_text.value = str(pid)
+        else:
+            self.bot_uptime_text.value = "—"
+            self.bot_pid_text.value = "—"
+        self._safe_update()
+
+    # ── Save logs ───────────────────────────────────────────────────────
+
+    def _save_logs(self, e):
+        """Guarda los logs de la consola en un archivo de texto."""
+        timestamp = time.strftime("%Y%m%d_%H%M%S")
+        base = (
+            Path(self.project_path_text.value)
+            if self.project_path_text.value
+            else Path.cwd()
+        )
+        filepath = base / f"console_log_{timestamp}.txt"
+        try:
+            with open(filepath, "w", encoding="utf-8") as f:
+                for ctrl in self.console.controls:
+                    if isinstance(ctrl, ft.Text) and ctrl.value:
+                        f.write(ctrl.value + "\n")
+            self.log(f"💾 Logs guardados en {filepath.name}", ft.Colors.GREEN_200)
+        except Exception as ex:
+            self.log(f"❌ Error al guardar logs: {ex}", ft.Colors.RED_400)
+
+    # ── Version ─────────────────────────────────────────────────────────
+
+    def _get_git_hash(self) -> str:
+        """Obtiene el hash corto de Git del repositorio del proyecto."""
+        project = self.project_path_text.value
+        if not project:
+            return "—"
+        try:
+            result = subprocess.run(
+                ["git", "rev-parse", "--short", "HEAD"],
+                capture_output=True,
+                text=True,
+                cwd=project,
+                creationflags=CREATE_NO_WINDOW,
+            )
+            if result.returncode == 0 and result.stdout.strip():
+                return f"v{result.stdout.strip()}"
+        except Exception:
+            pass
+        return "—"
 
 
 def main(page: ft.Page):
