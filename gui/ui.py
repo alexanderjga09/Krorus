@@ -9,7 +9,7 @@ from typing import Any
 
 import flet as ft
 
-from .core import _ICON_PATH, BotSetupCore
+from .core import _ICON_PATH
 
 
 class BotSetupUI:
