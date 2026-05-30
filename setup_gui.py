@@ -1,3 +1,4 @@
+import atexit
 import collections
 import json
 import os
@@ -184,8 +185,7 @@ class BotSetupApp:
         # Limpiar procesos zombie del bot antes de cualquier cosa
         self._cleanup_zombies()
         # Mata el proceso hijo si se cierra la ventana
-        self.page.window.prevent_close = True
-        self.page.on_window_event = self._on_window_event
+        atexit.register(self._cleanup_process_ref)
         # Verificacion silenciosa de actualizaciones al abrir la GUI
         try:
             threading.Thread(target=self._startup_update_check, daemon=True).start()
@@ -1199,11 +1199,6 @@ class BotSetupApp:
     def stop_bot(self):
         self._cleanup_process_ref()
         self.log("🛑 Bot detenido.", ft.Colors.ORANGE_400)
-
-    async def _on_window_event(self, e):
-        if e.data == "close":
-            self._cleanup_process_ref()
-            await self.page.window_close_async()
 
     def restart_bot(self, _):
         with self._restart_lock:
