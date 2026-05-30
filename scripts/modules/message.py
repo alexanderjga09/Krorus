@@ -35,6 +35,51 @@ vt_semaphore = asyncio.Semaphore(4)
 _JSON_CACHE = {}
 _JSON_CACHE_MAX = 128
 
+_MISCONDUCT_CACHE: dict[str, dict] = {}
+_MISCONDUCT_CACHE_MAX = 512
+_MISCONDUCT_CACHE_TTL = 300  # 5 minutos
+_MISCONDUCT_CACHE_PATH = Path(__file__).parent.parent.parent / "data" / "misconduct_cache.json"
+
+
+def _load_misconduct_cache() -> dict[str, dict]:
+    """Carga el cache persistente desde disco, limpiando entradas expiradas."""
+    path = _MISCONDUCT_CACHE_PATH
+    if not path.exists():
+        return {}
+    try:
+        raw = path.read_text(encoding="utf-8")
+        data: dict = js.loads(raw)
+        now = time.time()
+        valid = {
+            k: v
+            for k, v in data.items()
+            if isinstance(v, dict)
+            and "result" in v
+            and "ts" in v
+            and now - v["ts"] < _MISCONDUCT_CACHE_TTL
+        }
+        if len(valid) < len(data):
+            _save_misconduct_cache(valid)
+        return valid
+    except Exception as e:
+        logger.warning(f"[Cache] Error cargando misconduct_cache.json: {e}")
+        return {}
+
+
+def _save_misconduct_cache(cache: dict[str, dict]) -> None:
+    """Persiste el cache a disco."""
+    try:
+        _MISCONDUCT_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
+        _MISCONDUCT_CACHE_PATH.write_text(
+            js.dumps(cache, indent=2), encoding="utf-8"
+        )
+    except Exception as e:
+        logger.warning(f"[Cache] Error guardando misconduct_cache.json: {e}")
+
+
+# Inicializar cache persistente al importar el módulo
+_MISCONDUCT_CACHE = _load_misconduct_cache()
+
 
 class GroqRateLimiter:
     """Controla que no excedamos las llamadas/minuto a la API de Groq."""
@@ -474,7 +519,15 @@ class Message:
 
             text_to_analyze = Message._normalize_for_groq(self.msg.content.strip())
 
-        async def _call_groq():
+        cache_key = hashlib.sha256(text_to_analyze.encode()).hexdigest()
+        cached = _MISCONDUCT_CACHE.get(cache_key)
+        now = time.time()
+        if cached is not None and now - cached["ts"] < _MISCONDUCT_CACHE_TTL:
+            logger.debug(f"[Groq] Cache hit: {text_to_analyze[:60]}... -> {cached['result']}")
+            return cached["result"]
+
+        async def _call_groq() -> bool | None:
+            """Llama a Groq. Retorna True/False en éxito, None en error transitorio."""
             prompt_instrucciones = """
                 Eres un sistema de moderación automatizado de alta precisión. Tu única tarea es analizar el siguiente texto (en español o spanglish) y determinar si viola las políticas de seguridad.
 
@@ -530,19 +583,19 @@ class Message:
                 logger.warning(
                     f"[Groq] Timeout al analizar: {text_to_analyze[:80]}..."
                 )
-                return False
+                return None
             except groq.AuthenticationError:
                 logger.error(
                     "[Groq] API key inválida o sin permisos. "
                     "Revisa la variable GROQ_API_KEY en el archivo .env."
                 )
-                return False
+                return None
             except groq.PermissionDeniedError:
                 logger.error(
                     "[Groq] Acceso denegado (403). "
                     "Comprueba tu red (VPN/proxy) o el estado de tu cuenta Groq."
                 )
-                return False
+                return None
             except groq.RateLimitError as e:
                 retry_after = 60
                 try:
@@ -553,18 +606,28 @@ class Message:
                     f"[Groq] 429 Too Many Requests. Esperando {retry_after:.0f}s..."
                 )
                 await asyncio.sleep(retry_after)
-                return False
+                return None
             except groq.APIConnectionError as e:
                 logger.error(f"[Groq] Error de conexión con la API: {e}")
-                return False
+                return None
             except groq.GroqError as e:
                 logger.error(f"[Groq] Error de la API ({type(e).__name__}): {e}")
-                return False
+                return None
             except Exception as e:
                 logger.exception(f"[Groq] Error inesperado: {e}")
-                return False
+                return None
 
-        return await _call_groq()
+        result = await _call_groq()
+
+        if result is not None:
+            _MISCONDUCT_CACHE[cache_key] = {"result": result, "ts": time.time()}
+            if len(_MISCONDUCT_CACHE) > _MISCONDUCT_CACHE_MAX:
+                oldest = min(_MISCONDUCT_CACHE, key=lambda k: _MISCONDUCT_CACHE[k]["ts"])
+                del _MISCONDUCT_CACHE[oldest]
+            _save_misconduct_cache(_MISCONDUCT_CACHE)
+            return result
+
+        return False
 
     async def _ref_message(self, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True):
         logger.debug(

@@ -1,5 +1,4 @@
 import collections
-import inspect
 import json
 import os
 import re
@@ -10,6 +9,7 @@ import time
 import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog
+from typing import Any
 
 import flet as ft
 
@@ -180,6 +180,50 @@ class BotSetupApp:
         """Ejecuta una funcion en un thread separado."""
         threading.Thread(target=func, daemon=True).start()
 
+    def _build_tabs(
+        self, labels: list[tuple[str, Any]], views: list[ft.Control]
+    ) -> ft.Control:
+        """Construye pestañas probando la API de Flet disponible."""
+        tabs = [ft.Tab(label=label, icon=icon) for label, icon in labels]
+        try:
+            return ft.Tabs(
+                selected_index=0,
+                animation_duration=300,
+                tabs=tabs,
+                controls=views,
+                expand=True,
+            )
+        except Exception:
+            pass
+        try:
+            return ft.Tabs(
+                selected_index=0,
+                animation_duration=300,
+                tabs=tabs,
+                views=views,
+                expand=True,
+            )
+        except Exception:
+            pass
+        # Fallback: botones manuales
+        self._tab_views = views
+        self._selected_tab = 0
+
+        def make_on_click(i):
+            def _on(e):
+                self._selected_tab = i
+                self.tab_view_container.content = self._tab_views[i]
+                self._safe_update()
+
+            return _on
+
+        buttons = [
+            ft.ElevatedButton(label, icon=icon, on_click=make_on_click(i))
+            for i, (label, icon) in enumerate(labels)
+        ]
+        self.tab_view_container = ft.Container(content=views[0], expand=True)
+        return ft.Column([ft.Row(buttons), self.tab_view_container], expand=True)
+
     # ── Thread-safe UI update ─────────────────────────────────────────────
 
     def _safe_update(self):
@@ -281,50 +325,67 @@ class BotSetupApp:
     # ── Deteccion y limpieza de instancias ──────────────────────────────
 
     def _find_bot_pids(self) -> list:
-        """Devuelve lista de PIDs de procesos del bot."""
+        """Devuelve lista de PIDs de procesos del bot usando tasklist."""
         project = self.project_path_text.value
         if not project:
             return []
 
         project_path = Path(project).resolve()
         project_str = str(project_path).lower()
+        pids: list[int] = []
 
-        # Buscar TODOS los procesos python primero para debug
-        all_python_pids = []
+        if sys.platform != "win32":
+            try:
+                res = subprocess.run(
+                    ["pgrep", "-f", "python.*main\\.py|krorus"],
+                    capture_output=True,
+                    text=True,
+                )
+                if res.stdout:
+                    return [int(pid) for pid in res.stdout.strip().split()]
+            except Exception:
+                pass
+            return []
+
         try:
             res = subprocess.run(
-                [
-                    "powershell",
-                    "-Command",
-                    "Get-Process python -ErrorAction SilentlyContinue | Select-Object Id,Path | ConvertTo-Json",
-                ],
+                ["tasklist", "/FO", "CSV", "/NH"],
                 capture_output=True,
                 text=True,
                 creationflags=CREATE_NO_WINDOW,
             )
-            if res.stdout:
-                data = json.loads(res.stdout)
-                if isinstance(data, dict):
-                    data = [data]
-                for proc in data:
-                    pid = proc.get("Id")
-                    path = (proc.get("Path") or "").lower()
-                    if pid and path:
-                        all_python_pids.append({"pid": pid, "path": path})
+            for line in res.stdout.strip().splitlines():
+                parts = line.strip('"').split('","')
+                if len(parts) < 2:
+                    continue
+                pid_str, image = parts[1], parts[0].lower()
+                if "python" not in image:
+                    continue
+                try:
+                    cmd_res = subprocess.run(
+                        [
+                            "wmic",
+                            "process",
+                            f"where ProcessId={pid_str}",
+                            "get",
+                            "CommandLine",
+                            "/format:value",
+                        ],
+                        capture_output=True,
+                        text=True,
+                        creationflags=CREATE_NO_WINDOW,
+                    )
+                    cmdline = cmd_res.stdout.lower()
+                    if (
+                        project_str in cmdline
+                        or "main.py" in cmdline
+                        or "krorus" in cmdline
+                    ):
+                        pids.append(int(pid_str))
+                except Exception:
+                    pass
         except Exception:
             pass
-
-        # Filtrar procesos que están en la carpeta del proyecto
-        pids = []
-        for proc_info in all_python_pids:
-            proc_path = proc_info["path"]
-            # Aceptar si el proceso está en el directorio del proyecto O si tiene main.py O si tiene krorus
-            if (
-                project_str in proc_path
-                or "main.py" in proc_path
-                or "krorus" in proc_path
-            ):
-                pids.append(proc_info["pid"])
 
         return pids
 
@@ -429,10 +490,8 @@ class BotSetupApp:
             "⚙️  Valores restablecidos y guardados automaticamente.", ft.Colors.BLUE_200
         )
 
-    def _startup_update_check(self):
-        repo_path = self.project_path_text.value
-        if not repo_path:
-            return
+    def _git_behind_count(self, repo_path: str) -> int | None:
+        """Devuelve cuántos commits está detrás del remoto, o None si falla."""
         try:
             subprocess.run(
                 ["git", "fetch"],
@@ -448,45 +507,42 @@ class BotSetupApp:
                 encoding="utf-8",
                 creationflags=CREATE_NO_WINDOW,
             )
-            count = int(res.stdout.strip() or 0)
-            if count > 0:
-                self.log(
-                    f"💡 ¡Hay {count} actualizaciones disponibles!", ft.Colors.GREEN_400
-                )
-                try:
-                    self.update_btn.icon = ft.Icon(
-                        ft.Icons.SYSTEM_UPDATE_ALT, color=ft.Colors.ORANGE_400
-                    )
-                    self.update_btn.tooltip = f"Hay {count} actualizaciones disponibles"
-                    self.update_badge.content.value = str(count)
-                    self.update_badge.visible = True
-                    self._safe_update()
-                except Exception:
-                    pass
-        except Exception as e:
-            self.log(
-                f"Error comprobando actualizaciones al inicio: {e}",
-                ft.Colors.ORANGE_400,
-            )
+            return int(res.stdout.strip() or 0)
+        except Exception:
+            return None
 
-    def show_snackbar(self, text, color=ft.Colors.BLUE_ACCENT):
+    def _show_update_badge(self, count: int):
+        self.update_btn.icon = ft.Icon(
+            ft.Icons.SYSTEM_UPDATE_ALT, color=ft.Colors.ORANGE_400
+        )
+        self.update_btn.tooltip = f"Hay {count} actualizaciones disponibles"
+        self.update_badge.content.value = str(count)
+        self.update_badge.visible = True
+        self._safe_update()
+
+    def _startup_update_check(self):
+        repo_path = self.project_path_text.value
+        if not repo_path:
+            return
+        count = self._git_behind_count(repo_path)
+        if count is not None and count > 0:
+            self.log(
+                f"💡 ¡Hay {count} actualizaciones disponibles!", ft.Colors.GREEN_400
+            )
+            self._show_update_badge(count)
+
+    def show_snackbar(self, text: str, color=ft.Colors.BLUE_ACCENT):
         def do_snack():
             try:
                 snack = ft.SnackBar(content=ft.Text(text), bgcolor=color)
-                if hasattr(self.page, "open_snack_bar"):
-                    try:
-                        self.page.snack_bar = snack
-                        self.page.open_snack_bar()
-                        return
-                    except Exception:
-                        pass
-                if hasattr(self.page, "show_snack_bar"):
-                    try:
-                        self.page.snack_bar = snack
-                        self.page.show_snack_bar()
-                        return
-                    except Exception:
-                        pass
+                for method_name in ("open_snack_bar", "show_snack_bar"):
+                    if hasattr(self.page, method_name):
+                        try:
+                            self.page.snack_bar = snack
+                            getattr(self.page, method_name)()
+                            return
+                        except Exception:
+                            continue
                 dlg = ft.AlertDialog(content=ft.Text(text))
                 self.page.dialog = dlg
                 self.page.open_dialog()
@@ -654,92 +710,17 @@ class BotSetupApp:
             else ft.Icon(ft.Icons.TERMINAL, color=ft.Colors.BLUE_ACCENT, size=30)
         )
 
-        # ── Pestanas (compatibilidad multi-versiones de Flet) ─────────────
-        views = [
+        # ── Pestanas ─────────────────────────────────────────────────────
+        tab_labels = [
+            ("Principal", ft.Icons.SETTINGS),
+            ("Funciones", ft.Icons.TOGGLE_ON),
+        ]
+        tab_views = [
             ft.Column([settings_column, ft.Container(expand=True), buttons_column]),
             ft.Column([features_list, ft.Container(expand=True)], expand=True),
         ]
 
-        self.tabs_control = None
-        try:
-            sig = inspect.signature(ft.Tabs)
-            params = set(sig.parameters.keys())
-        except Exception:
-            params = set()
-
-        # Opcion A: API con tab_bar + content (TabBarView)
-        try:
-            if "tab_bar" in params and "content" in params:
-                self.tabs_control = ft.Tabs(
-                    selected_index=0,
-                    animation_duration=300,
-                    tab_bar=ft.TabBar(
-                        tabs=[
-                            ft.Tab(label="Principal", icon=ft.Icons.SETTINGS),
-                            ft.Tab(label="Funciones", icon=ft.Icons.TOGGLE_ON),
-                        ],
-                    ),
-                    content=ft.TabBarView(controls=views),
-                    expand=True,
-                )
-        except Exception:
-            self.tabs_control = None
-
-        # Opcion B: API con 'tabs' y 'controls'/'views'/'content'
-        if self.tabs_control is None:
-            try:
-                kwargs = {
-                    "selected_index": 0,
-                    "animation_duration": 300,
-                    "expand": True,
-                }
-                if "tabs" in params:
-                    kwargs["tabs"] = [
-                        ft.Tab(label="Principal", icon=ft.Icons.SETTINGS),
-                        ft.Tab(label="Funciones", icon=ft.Icons.TOGGLE_ON),
-                    ]
-                if "controls" in params:
-                    kwargs["controls"] = views
-                elif "views" in params:
-                    kwargs["views"] = views
-                elif "content" in params:
-                    kwargs["content"] = ft.TabBarView(controls=views)
-
-                if any(k in params for k in ("tabs", "controls", "views", "content")):
-                    try:
-                        self.tabs_control = ft.Tabs(**kwargs)
-                    except Exception:
-                        self.tabs_control = None
-            except Exception:
-                self.tabs_control = None
-
-        # Fallback: construir un simple selector de pestanas manual
-        if self.tabs_control is None:
-            self._tab_views = views
-            self._selected_tab = 0
-
-            def make_on_click(i):
-                def _on(e):
-                    self._selected_tab = i
-                    self.tab_view_container.content = self._tab_views[i]
-                    self._safe_update()
-
-                return _on
-
-            btn0 = ft.ElevatedButton(
-                "Principal", icon=ft.Icons.SETTINGS, on_click=make_on_click(0)
-            )
-            btn1 = ft.ElevatedButton(
-                "Funciones", icon=ft.Icons.TOGGLE_ON, on_click=make_on_click(1)
-            )
-            tabs_row = ft.Row([btn0, btn1])
-            self.tab_view_container = ft.Container(
-                content=self._tab_views[0], expand=True
-            )
-            self.tabs_control = ft.Column(
-                [tabs_row, self.tab_view_container], expand=True
-            )
-
+        self.tabs_control = self._build_tabs(tab_labels, tab_views)
         left_panel = ft.Column([self.tabs_control])
 
         self.page.add(
@@ -1109,6 +1090,34 @@ class BotSetupApp:
             self._restart_requested = True
         self.stop_bot()
 
+    def _update_dependencies(self, repo_path: str):
+        pip_exe = self._venv_pip()
+        req_file = Path(repo_path) / "requirements.txt"
+        if not pip_exe.exists() or not req_file.exists():
+            return
+        self.log("📦 Verificando nuevas dependencias...", ft.Colors.BLUE_200)
+        try:
+            proc = subprocess.Popen(
+                [str(pip_exe), "install", "-r", str(req_file)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                cwd=repo_path,
+                creationflags=CREATE_NO_WINDOW,
+            )
+            if proc.stdout:
+                for line in proc.stdout:
+                    line = line.rstrip()
+                    if line:
+                        self.log(line)
+                proc.stdout.close()
+            proc.wait()
+            self.log("✅ Dependencias al dia.", ft.Colors.GREEN_200)
+        except Exception as e:
+            self.log(f"⚠️ Error actualizando dependencias: {e}", ft.Colors.ORANGE_400)
+
     def check_for_updates(self, _):
         self.is_busy = True
         self.update_states()
@@ -1119,86 +1128,38 @@ class BotSetupApp:
         def update():
             repo_path = self.project_path_text.value
             try:
-                subprocess.run(
-                    ["git", "fetch"],
-                    cwd=repo_path,
-                    capture_output=True,
-                    creationflags=CREATE_NO_WINDOW,
-                )
+                count = self._git_behind_count(repo_path)
+                if count is None:
+                    self.log("⚠️ No se pudo consultar el remoto.", ft.Colors.ORANGE_400)
+                    return
 
-                res = subprocess.run(
-                    ["git", "rev-list", "--count", "HEAD..@{u}"],
+                if count == 0:
+                    self.log("✅ El repositorio esta al dia.", ft.Colors.BLUE_200)
+                    return
+
+                self.log(
+                    f"💡 ¡Hay {count} actualizaciones disponibles!",
+                    ft.Colors.GREEN_400,
+                )
+                self._show_update_badge(count)
+
+                pull_res = subprocess.run(
+                    ["git", "pull"],
                     cwd=repo_path,
                     capture_output=True,
                     text=True,
                     encoding="utf-8",
                     creationflags=CREATE_NO_WINDOW,
                 )
-                count = int(res.stdout.strip() or 0)
-
-                if count > 0:
+                if pull_res.returncode != 0:
                     self.log(
-                        f"💡 ¡Hay {count} actualizaciones disponibles!",
-                        ft.Colors.GREEN_400,
+                        f"❌ Error al hacer pull: {pull_res.stderr}",
+                        ft.Colors.RED_400,
                     )
-                    try:
-                        self.update_btn.icon = ft.Icon(
-                            ft.Icons.SYSTEM_UPDATE_ALT, color=ft.Colors.ORANGE_400
-                        )
-                        self.update_btn.tooltip = (
-                            f"Hay {count} actualizaciones disponibles"
-                        )
-                        self.update_badge.content.value = str(count)
-                        self.update_badge.visible = True
-                        self._safe_update()
-                    except Exception:
-                        pass
+                    return
 
-                    pull_res = subprocess.run(
-                        ["git", "pull"],
-                        cwd=repo_path,
-                        capture_output=True,
-                        text=True,
-                        encoding="utf-8",
-                        creationflags=CREATE_NO_WINDOW,
-                    )
-                    if pull_res.returncode == 0:
-                        self.log(
-                            "✅ Codigo actualizado con exito.", ft.Colors.GREEN_400
-                        )
-
-                        pip_exe = self._venv_pip()
-                        req_file = Path(repo_path) / "requirements.txt"
-                        if pip_exe.exists() and req_file.exists():
-                            self.log(
-                                "📦 Verificando nuevas dependencias...",
-                                ft.Colors.BLUE_200,
-                            )
-                            proc = subprocess.Popen(
-                                [str(pip_exe), "install", "-r", str(req_file)],
-                                stdout=subprocess.PIPE,
-                                stderr=subprocess.STDOUT,
-                                text=True,
-                                encoding="utf-8",
-                                errors="replace",
-                                cwd=repo_path,
-                                creationflags=CREATE_NO_WINDOW,
-                            )
-                            if proc.stdout:
-                                for line in proc.stdout:
-                                    line = line.rstrip()
-                                    if line:
-                                        self.log(line)
-                                proc.stdout.close()
-                            proc.wait()
-                            self.log("✅ Dependencias al dia.", ft.Colors.GREEN_200)
-                    else:
-                        self.log(
-                            f"❌ Error al hacer pull: {pull_res.stderr}",
-                            ft.Colors.RED_400,
-                        )
-                else:
-                    self.log("✅ El repositorio esta al dia.", ft.Colors.BLUE_200)
+                self.log("✅ Codigo actualizado con exito.", ft.Colors.GREEN_400)
+                self._update_dependencies(repo_path)
             except Exception as e:
                 self.log(f"⚠️ Error durante la actualizacion: {e}", ft.Colors.ORANGE_400)
             finally:
