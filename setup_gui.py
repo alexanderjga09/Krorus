@@ -1353,7 +1353,8 @@ class BotSetupApp:
                         and self.running_process.poll() is None
                     )
                 if not running:
-                    break
+                    time.sleep(1)
+                    continue
                 self._refresh_bot_status()
                 time.sleep(5)
 
