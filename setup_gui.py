@@ -164,7 +164,7 @@ class BotSetupApp:
         # Bot status
         self.bot_uptime_text = ft.Text("—", size=13)
         self.bot_pid_text = ft.Text("—", size=13)
-        self.bot_status_refresh_btn = ft.Button("↻", icon=ft.Icons.REFRESH, on_click=self._refresh_bot_status, width=40)
+        self.bot_status_refresh_btn = ft.IconButton(icon=ft.Icons.REFRESH, tooltip="Actualizar", on_click=self._refresh_bot_status)
 
         # Save logs
         self.save_logs_btn = ft.IconButton(ft.Icons.SAVE, tooltip="Guardar logs", on_click=self._save_logs)
@@ -258,12 +258,17 @@ class BotSetupApp:
     # ── Thread-safe UI update ─────────────────────────────────────────────
 
     def _safe_update(self):
-        """Llama a page.update() con lock para evitar race conditions entre threads."""
-        with self._update_lock:
-            try:
-                self.page.update()
-            except Exception:
-                pass
+        """Llama a page.update() en el hilo principal de Flet."""
+        def _do():
+            with self._update_lock:
+                try:
+                    self.page.update()
+                except Exception:
+                    pass
+        try:
+            self.page.run_thread(_do)
+        except Exception:
+            _do()
 
     # ── Helpers ────────────────────────────────────────────────────────────
 
@@ -1147,6 +1152,7 @@ class BotSetupApp:
         self.clear_console(None)
         self.log("🤖 Iniciando bot...", ft.Colors.GREEN_200)
         self._bot_start_time = time.time()
+        self._start_uptime_timer()
         self.run_command(
             [str(python_bin), "main.py"],
             cwd=self.project_path_text.value,
@@ -1340,6 +1346,23 @@ class BotSetupApp:
             ft.ThemeMode.LIGHT if e.control.value else ft.ThemeMode.DARK
         )
         self._safe_update()
+
+    def _start_uptime_timer(self):
+        """Actualiza el uptime cada 5s mientras el bot corre."""
+
+        def _loop():
+            while True:
+                with self.process_lock:
+                    running = (
+                        self.running_process is not None
+                        and self.running_process.poll() is None
+                    )
+                if not running:
+                    break
+                self._refresh_bot_status()
+                time.sleep(5)
+
+        threading.Thread(target=_loop, daemon=True).start()
 
     # ── Bot status ──────────────────────────────────────────────────────
 
