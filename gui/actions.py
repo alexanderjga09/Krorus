@@ -563,7 +563,7 @@ class BotSetupActions:
 
     def _refresh_cache_stats(self, e=None):
         try:
-            from modules.message import get_misconduct_cache_stats
+            from scripts.modules.message import get_misconduct_cache_stats
         except ImportError:
             self.cache_hits_text.value = "N/A"
             self.cache_misses_text.value = "N/A"
@@ -582,7 +582,7 @@ class BotSetupActions:
 
     def _clear_cache(self, e):
         try:
-            from modules.message import clear_misconduct_cache
+            from scripts.modules.message import clear_misconduct_cache
 
             clear_misconduct_cache()
             self.log("Cache de Groq limpiada.", ft.Colors.GREEN_400)
@@ -592,7 +592,7 @@ class BotSetupActions:
 
     def _restore_backup(self, e):
         try:
-            from modules.database import restore_latest_backup
+            from scripts.modules.database import restore_latest_backup
         except ImportError:
             self.log(
                 "No se pudo importar restore_latest_backup", ft.Colors.RED_400
