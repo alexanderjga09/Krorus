@@ -177,7 +177,7 @@ class BotSetupUI:
                         ),
                         ft.Column(
                             [
-                                ft.Text("Tamano:", size=12, color=ft.Colors.GREY),
+                                ft.Text("Tamaño:", size=12, color=ft.Colors.GREY),
                                 self.cache_size_text,
                             ]
                         ),

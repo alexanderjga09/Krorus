@@ -14,6 +14,7 @@ import aiohttp
 import discord
 import groq
 
+from . import misconduct_cache as _mc
 from .chainlog import get_chain_log
 from .code import generate_code
 from .exif_checker import ArchiveExifReport
@@ -34,8 +35,6 @@ logger = logging.getLogger(__name__)
 vt_semaphore = asyncio.Semaphore(4)
 _JSON_CACHE = {}
 _JSON_CACHE_MAX = 128
-
-from . import misconduct_cache as _mc
 
 
 class GroqRateLimiter:
@@ -118,7 +117,9 @@ class Message:
         )
         return "\n".join(lines) + extra
 
-    async def check_exif_sensible(self, attachment: discord.Attachment) -> ArchiveExifReport | None:
+    async def check_exif_sensible(
+        self, attachment: discord.Attachment
+    ) -> ArchiveExifReport | None:
         """
         Descarga un adjunto y revisa si contiene metadatos EXIF sensibles.
         Soporta imágenes directas y archivos ZIP que contengan imágenes.
@@ -150,7 +151,9 @@ class Message:
         try:
             file_data = await attachment.read()
 
-            report = await check_archive_exif_async(file_data, attachment.filename, attachment.content_type)
+            report = await check_archive_exif_async(
+                file_data, attachment.filename, attachment.content_type
+            )
 
             if report.has_sensitive_data or report.has_high_risk:
                 logger.info(
@@ -398,7 +401,9 @@ class Message:
                 logger.error(f"[ERROR VT] Error de red: {e}")
                 return False
 
-    async def transcribe_audio(self, GROQ_CLIENT, member: discord.Member = None, timeout: float = 30.0):
+    async def transcribe_audio(
+        self, GROQ_CLIENT, member: discord.Member = None, timeout: float = 30.0
+    ):
         if not self.msg.attachments:
             return
         audio_attachment = self.msg.attachments[0]
@@ -461,7 +466,9 @@ class Message:
                 None,
             )
 
-    async def Misconduct(self, groq_client, combined_text: str | None = None, timeout: float = 10.0):
+    async def Misconduct(
+        self, groq_client, combined_text: str | None = None, timeout: float = 10.0
+    ):
         if combined_text is not None:
             text_to_analyze = Message._normalize_for_groq(combined_text)
         else:
@@ -481,7 +488,9 @@ class Message:
         now = time.time()
         if cached is not None and now - cached["ts"] < _mc._MISCONDUCT_CACHE_TTL:
             _mc._MISCONDUCT_CACHE_HITS += 1
-            logger.debug(f"[Groq] Cache hit: {text_to_analyze[:60]}... -> {cached['result']}")
+            logger.debug(
+                f"[Groq] Cache hit: {text_to_analyze[:60]}... -> {cached['result']}"
+            )
             return cached["result"]
         _mc._MISCONDUCT_CACHE_MISSES += 1
 
@@ -539,9 +548,7 @@ class Message:
                 response = chat_completion.choices[0].message.content.strip().lower()
                 return response.startswith("true")
             except asyncio.TimeoutError:
-                logger.warning(
-                    f"[Groq] Timeout al analizar: {text_to_analyze[:80]}..."
-                )
+                logger.warning(f"[Groq] Timeout al analizar: {text_to_analyze[:80]}...")
                 return None
             except groq.AuthenticationError:
                 logger.error(
@@ -581,14 +588,18 @@ class Message:
         if result is not None:
             _mc._MISCONDUCT_CACHE[cache_key] = {"result": result, "ts": time.time()}
             if len(_mc._MISCONDUCT_CACHE) > _mc._MISCONDUCT_CACHE_MAX:
-                oldest = min(_mc._MISCONDUCT_CACHE, key=lambda k: _mc._MISCONDUCT_CACHE[k]["ts"])
+                oldest = min(
+                    _mc._MISCONDUCT_CACHE, key=lambda k: _mc._MISCONDUCT_CACHE[k]["ts"]
+                )
                 del _mc._MISCONDUCT_CACHE[oldest]
             _mc._save_misconduct_cache(_mc._MISCONDUCT_CACHE)
             return result
 
         return False
 
-    async def _ref_message(self, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True):
+    async def _ref_message(
+        self, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True
+    ):
         logger.debug(
             f"[REF] _ref_message llamado para msg {self.msg.id} con referencia a {self.msg.reference.message_id if self.msg.reference else 'None'}"
         )
@@ -677,7 +688,9 @@ class Message:
                 )
 
                 for report in exif_findings:
-                    risk_level = "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
+                    risk_level = (
+                        "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
+                    )
                     results.append(
                         (
                             "",
@@ -729,7 +742,13 @@ class Message:
         return results
 
     async def _mention_user(
-        self, mentioned_users, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True
+        self,
+        mentioned_users,
+        role_id,
+        GROQ_CLIENT,
+        vt_api_key,
+        session,
+        do_misconduct=True,
     ):
         """
         Recibe la lista de objetos User/Member ya resuelta por Discord (message.mentions).
@@ -804,7 +823,9 @@ class Message:
                 )
 
                 for report in exif_findings:
-                    risk_level = "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
+                    risk_level = (
+                        "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
+                    )
                     results.append(
                         (
                             "",
