@@ -640,6 +640,7 @@ class BotSetupApp:
                 ft.Row([self.restore_backup_btn]),
             ],
             scroll=ft.ScrollMode.AUTO,
+            expand=True,
         )
 
         # ── Switches de funciones ──────────────────────────────────────────
@@ -795,8 +796,8 @@ class BotSetupApp:
             ("Funciones", ft.Icons.TOGGLE_ON),
         ]
         tab_views = [
-            ft.Column([settings_column, ft.Container(expand=True), buttons_column]),
-            ft.Column([features_list, ft.Container(expand=True)], expand=True),
+            ft.Column([settings_column, buttons_column]),
+            ft.Column([features_list], expand=True),
         ]
 
         self.tabs_control = self._build_tabs(tab_labels, tab_views)
