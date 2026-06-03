@@ -1,11 +1,14 @@
 import atexit
 import collections
+import logging
 import sys
 import threading
 import time
 from pathlib import Path
 
 import flet as ft
+
+logger = logging.getLogger("krorus.gui")
 
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _ICON_PATH = Path(__file__).parent.parent / "krorus.ico"
@@ -159,7 +162,7 @@ class BotSetupCore:
         try:
             threading.Thread(target=self._startup_update_check, daemon=True).start()
         except Exception:
-            pass
+            logger.debug("No se pudo lanzar el hilo de chequeo de updates", exc_info=True)
 
     def _safe_update(self):
         def _do():

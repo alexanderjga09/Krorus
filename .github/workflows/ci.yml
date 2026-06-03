@@ -10,38 +10,48 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.13'
 
-      - name: Install Python deps
-        run: |
-          python -m pip install --upgrade pip
-          if [ -f requirements.txt ]; then pip install -r requirements.txt; fi
-          pip install pytest
-
-      - name: Run Python tests
-        run: |
-          pytest -q tests/ || true
-
       - name: Install Rust
         uses: dtolnay/rust-toolchain@v1
         with:
           toolchain: stable
 
-      - name: Cargo Check
-        run: |
-          cargo check --workspace
+      - name: Cargo check
+        run: cargo check --workspace
 
-      - name: Build and install Rust extensions
+      - name: Create virtualenv and install deps
         run: |
           python -m venv .venv
-          source .venv/bin/activate
+          . .venv/bin/activate
+          python -m pip install --upgrade pip
+          if [ -f requirements-dev.txt ]; then
+            pip install -r requirements-dev.txt
+          elif [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+
+      # Las extensiones Rust deben instalarse ANTES de los tests: la suite
+      # importa chainlog_rs / exif_rs y, sin ellas, los tests se saltaban en
+      # silencio (antes con `|| true` el build nunca fallaba ante regresiones).
+      - name: Build and install Rust extensions
+        run: |
+          . .venv/bin/activate
           pip install maturin
-          cd crates/chainlog_rs
-          maturin develop --release
-          cd ../exif_rs
-          maturin develop --release
+          (cd crates/chainlog_rs && maturin develop --release)
+          (cd crates/exif_rs && maturin develop --release)
+
+      - name: Lint (ruff)
+        run: |
+          . .venv/bin/activate
+          ruff check .
+
+      - name: Run Python tests
+        run: |
+          . .venv/bin/activate
+          pytest tests/

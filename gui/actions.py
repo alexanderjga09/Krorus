@@ -1,4 +1,5 @@
 import json
+import logging
 import os
 import subprocess
 import sys
@@ -9,6 +10,8 @@ from pathlib import Path
 import flet as ft
 
 from .core import _CONFIG_FILE, CREATE_NO_WINDOW
+
+logger = logging.getLogger("krorus.gui")
 
 
 class BotSetupActions:
@@ -53,7 +56,7 @@ class BotSetupActions:
         try:
             _CONFIG_FILE.write_text(json.dumps({"last_path": path}), encoding="utf-8")
         except Exception:
-            pass
+            logger.debug("No se pudo guardar la ultima ruta usada", exc_info=True)
 
     def _restore_last_path(self):
         try:
@@ -70,7 +73,7 @@ class BotSetupActions:
                         pass
                     self.update_states()
         except Exception:
-            pass
+            logger.debug("No se pudo restaurar la ultima ruta de proyecto", exc_info=True)
 
     def _find_bot_pids(self) -> list:
         project = self.project_path_text.value

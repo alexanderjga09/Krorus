@@ -24,6 +24,9 @@ class ExifCheck(commands.Cog):
     ):
         target_msg = None
 
+        # En slash commands ctx.message suele ser None; lo resolvemos de forma segura.
+        ctx_reference = getattr(getattr(ctx, "message", None), "reference", None)
+
         if mensaje:
             try:
                 msg_id = int(mensaje)
@@ -33,10 +36,10 @@ class ExifCheck(commands.Cog):
                     ":x: No se encontro el mensaje con esa ID.", ephemeral=True
                 )
                 return
-        elif ctx.message.reference:
+        elif ctx_reference:
             try:
                 target_msg = await ctx.channel.fetch_message(
-                    ctx.message.reference.message_id
+                    ctx_reference.message_id
                 )
             except discord.NotFound:
                 await ctx.respond(

@@ -89,6 +89,8 @@ Esta función está implementada en Rust (`crates/exif_rs`) para máximo rendimi
 ### 🔐 Cifrado Híbrido para Whispers
 Los mensajes secretos (`/whisper`) usan cifrado híbrido **AES-256-GCM + RSA-OAEP**: cada mensaje tiene una clave AES única cifrada con la clave pública RSA del destinatario. Si el remitente **o** destinatario tiene el rol Protegido, el contenido se intercepta y envía al canal de staff.
 
+> **Modelo de amenaza (importante):** el cifrado protege el mensaje **frente a otros usuarios de Discord y en tránsito**, no frente al operador del bot. Las claves privadas RSA se generan y almacenan **sin cifrar** en `data/keysDB.json` dentro del servidor que ejecuta Krorus, lo cual es **necesario por diseño** para que el staff pueda interceptar y descifrar los whispers que involucran a un menor. En consecuencia, cualquier persona con acceso al sistema de archivos del bot puede descifrar todos los whispers. Trata `data/keysDB.json` como información sensible (está excluido de git y se intenta aplicar permisos `0600`).
+
 ---
 
 ## Opciones de Configuración

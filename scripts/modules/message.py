@@ -30,6 +30,10 @@ _DISCORD_INVITE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Extractor único de URLs con protocolo (usado en todo el módulo para evitar
+# tener varias expresiones regulares de URL divergentes).
+_URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
+
 logger = logging.getLogger(__name__)
 
 vt_semaphore = asyncio.Semaphore(4)
@@ -198,8 +202,11 @@ class Message:
             _JSON_CACHE[filename] = {"hash": content_hash, "data": []}
             data = []
 
-        if len(_JSON_CACHE) > _JSON_CACHE_MAX:
-            _JSON_CACHE.clear()
+        # Evicción tipo LRU simple: descarta las entradas más antiguas (las
+        # primeras insertadas) en lugar de vaciar todo el caché de golpe.
+        while len(_JSON_CACHE) > _JSON_CACHE_MAX:
+            oldest_key = next(iter(_JSON_CACHE))
+            del _JSON_CACHE[oldest_key]
         return data
 
     async def _has_analyzable_text(self) -> bool:
@@ -207,8 +214,7 @@ class Message:
         if not content:
             return False
 
-        url_pattern = r"https?://\S+"
-        urls = re.findall(url_pattern, content)
+        urls = _URL_RE.findall(content)
 
         # Si hay URLs, verificar whitelist primero antes de considerar el texto
         if urls:
@@ -232,7 +238,7 @@ class Message:
         else:
             non_whitelisted_urls = []
 
-        text = re.sub(url_pattern, "", content)
+        text = _URL_RE.sub("", content)
         text = _DISCORD_INVITE_RE.sub("", text)
         stripped = text.strip()
         if len(stripped) > 2:
@@ -290,10 +296,7 @@ class Message:
             return True, "discord.gg", invite_url
 
         # ── URLs estándar con protocolo ──────────────────────────────────
-        url_match = re.search(
-            r"http[s]?://(?:[a-zA-Z]|[0-9]|[$-_@.&+]|[!*\\(\\),]|(?:%[0-9a-fA-F][0-9a-fA-F]))+",
-            content,
-        )
+        url_match = _URL_RE.search(content)
         if not url_match:
             return False, None, None
 
@@ -402,11 +405,22 @@ class Message:
                 return False
 
     async def transcribe_audio(
-        self, GROQ_CLIENT, member: discord.Member = None, timeout: float = 30.0
+        self,
+        GROQ_CLIENT,
+        member: discord.Member = None,
+        timeout: float = 30.0,
+        attachment: discord.Attachment | None = None,
     ):
-        if not self.msg.attachments:
+        if GROQ_CLIENT is None:
+            logger.debug("[Groq] Cliente no disponible, se omite transcripcion.")
             return
-        audio_attachment = self.msg.attachments[0]
+        # Permite indicar explicitamente el adjunto a transcribir; por defecto
+        # usa el primero del mensaje.
+        audio_attachment = attachment
+        if audio_attachment is None:
+            if not self.msg.attachments:
+                return
+            audio_attachment = self.msg.attachments[0]
         logger.debug(
             f"[DEBUG] Transcribing audio: {audio_attachment.filename} (type: {audio_attachment.content_type})"
         )
@@ -469,6 +483,10 @@ class Message:
     async def Misconduct(
         self, groq_client, combined_text: str | None = None, timeout: float = 10.0
     ):
+        if groq_client is None:
+            logger.debug("[Groq] Cliente no disponible, se omite analisis de texto.")
+            return False
+
         if combined_text is not None:
             text_to_analyze = Message._normalize_for_groq(combined_text)
         else:
@@ -656,7 +674,7 @@ class Message:
             if audio_att:
                 logger.debug("[DEBUG _ref] Audio detectado, transcribiendo...")
                 transcription = await self.transcribe_audio(
-                    GROQ_CLIENT, ref_message.author
+                    GROQ_CLIENT, ref_message.author, attachment=audio_att
                 )
                 logger.debug(f"[DEBUG _ref] Resultado transcripción: {transcription}")
                 if transcription:
@@ -789,7 +807,7 @@ class Message:
             if audio_att:
                 logger.debug("[MENTION] Audio detectado, transcribiendo...")
                 transcription = await self.transcribe_audio(
-                    GROQ_CLIENT, protected_mentions[0]
+                    GROQ_CLIENT, protected_mentions[0], attachment=audio_att
                 )
                 if transcription:
                     results.append(transcription)

@@ -14,7 +14,7 @@ class HealthCheck(commands.Cog):
 
     @commands.slash_command(name="status", description="Muestra el estado del bot.")
     async def status(self, ctx: discord.ApplicationContext):
-        rate_limited = self.client._rate_limit_until > 0
+        rate_limited = self.client.is_rate_limited()
         rss = "🔴 Rate Limited" if rate_limited else "🟢 Normal"
 
         embed = discord.Embed(
