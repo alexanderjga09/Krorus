@@ -22,6 +22,7 @@ env/
 # datos semilla iniciales, por eso no aparecen aquí.
 data/logs.json
 data/misconduct_cache.json
+data/misconduct_cache_stats.json
 logs.json
 backups/
 

@@ -505,12 +505,12 @@ class Message:
         cached = _mc._MISCONDUCT_CACHE.get(cache_key)
         now = time.time()
         if cached is not None and now - cached["ts"] < _mc._MISCONDUCT_CACHE_TTL:
-            _mc._MISCONDUCT_CACHE_HITS += 1
+            _mc.record_cache_hit()
             logger.debug(
                 f"[Groq] Cache hit: {text_to_analyze[:60]}... -> {cached['result']}"
             )
             return cached["result"]
-        _mc._MISCONDUCT_CACHE_MISSES += 1
+        _mc.record_cache_miss()
 
         async def _call_groq() -> bool | None:
             """Llama a Groq. Retorna True/False en éxito, None en error transitorio."""
