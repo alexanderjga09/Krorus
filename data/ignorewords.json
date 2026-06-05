@@ -993,5 +993,7 @@
     "Nekoknockout",
     "Nekopsycho",
     "$p",
-    "$ts"
+    "$ts",
+    "$build",
+    "$chall"
 ]
