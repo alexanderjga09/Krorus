@@ -268,6 +268,8 @@ class BotSetupCore:
         self._safe_update()
 
     def _on_console_scroll(self, e):
+        if e.event_type != "user_scroll":
+            return
         if e.pixels is not None and e.max_scroll_extent is not None:
             near_bottom = e.pixels >= e.max_scroll_extent - 50
             if near_bottom != self.console.auto_scroll:
