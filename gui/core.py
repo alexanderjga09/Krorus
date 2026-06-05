@@ -36,6 +36,9 @@ class BotSetupCore:
         self._config_changed = False
         self._log_queue: collections.deque = collections.deque()
         self._update_lock = threading.Lock()
+        self._log_records: list[dict] = []
+        self._console_filter = "all"
+        self._console_search = ""
 
         self.project_path_text = ft.TextField(
             label="Carpeta del Proyecto",
@@ -70,6 +73,49 @@ class BotSetupCore:
         self.console = ft.ListView(
             expand=True, spacing=2, auto_scroll=True,
             on_scroll=self._on_console_scroll,
+        )
+        self.console_search_field = ft.TextField(
+            hint_text="Filtrar texto...",
+            prefix_icon=ft.Icons.SEARCH,
+            dense=True,
+            height=42,
+            width=180,
+            content_padding=ft.Padding(10, 4, 10, 4),
+            border_color=ft.Colors.GREY_700,
+            on_change=self._on_console_search,
+        )
+        self.console_filter_dropdown = ft.Dropdown(
+            value="all",
+            width=140,
+            dense=True,
+            options=[
+                ft.dropdown.Option("all", "Todos"),
+                ft.dropdown.Option("info", "Info"),
+                ft.dropdown.Option("warn", "Avisos"),
+                ft.dropdown.Option("error", "Errores"),
+            ],
+            on_select=self._on_console_filter,
+        )
+        self.console_counter_text = ft.Text(
+            "0 lineas",
+            size=12,
+            color=ft.Colors.GREY,
+            width=140,
+            no_wrap=True,
+            text_align=ft.TextAlign.LEFT,
+        )
+        self.copy_logs_btn = ft.IconButton(
+            ft.Icons.COPY_ALL,
+            tooltip="Copiar todo al portapapeles",
+            on_click=self._copy_logs,
+        )
+        self.scroll_bottom_btn = ft.IconButton(
+            icon=ft.Icons.ARROW_DOWNWARD,
+            icon_color=ft.Colors.WHITE,
+            bgcolor=ft.Colors.BLUE_ACCENT,
+            tooltip="Ir al final",
+            on_click=self._scroll_to_bottom,
+            visible=False,
         )
 
         self.status_dot = ft.Icon(ft.Icons.CIRCLE, color=ft.Colors.GREY_400, size=12)
@@ -234,10 +280,60 @@ class BotSetupCore:
             / ("pip.exe" if sys.platform == "win32" else "pip")
         )
 
-    def log(self, message, color=ft.Colors.GREY_300):
+    # Palabras clave para autodeteccion de nivel en salida sin color explicito.
+    _ERROR_KEYWORDS = (
+        "error", "traceback", "exception", "critical", "fatal",
+        "failed", "fallo", "fallido",
+    )
+    _WARN_KEYWORDS = ("warning", "warn", "deprecat", "aviso", "advertencia")
+
+    def _classify_log(self, message: str, color):
+        """Devuelve (nivel, color_resuelto) para un mensaje de consola.
+
+        Si se pasa un color explicito, el nivel se deriva de el. Si no, se
+        autodetecta a partir del contenido (util para la salida del bot)."""
+        if color is not None:
+            cstr = str(color)
+            if "RED" in cstr:
+                return "error", color
+            if "ORANGE" in cstr or "YELLOW" in cstr:
+                return "warn", color
+            return "info", color
+        low = message.lower()
+        if any(k in low for k in self._ERROR_KEYWORDS):
+            return "error", ft.Colors.RED_300
+        if any(k in low for k in self._WARN_KEYWORDS):
+            return "warn", ft.Colors.ORANGE_300
+        return "info", ft.Colors.GREY_300
+
+    def log(self, message, color=None):
         timestamp = time.strftime("%H:%M:%S")
-        self._log_queue.append((timestamp, message, color))
+        message = str(message)
+        level, resolved = self._classify_log(message, color)
+        self._log_queue.append(
+            {
+                "text": f"[{timestamp}] {message}",
+                "color": resolved,
+                "level": level,
+            }
+        )
         self._flush_console()
+
+    def _passes_filter(self, rec: dict) -> bool:
+        if self._console_filter != "all" and rec["level"] != self._console_filter:
+            return False
+        if self._console_search and self._console_search not in rec["text"].lower():
+            return False
+        return True
+
+    def _make_log_control(self, rec: dict) -> ft.Text:
+        return ft.Text(
+            rec["text"],
+            color=rec["color"],
+            font_family="Consolas",
+            size=13,
+            selectable=True,
+        )
 
     def _flush_console(self):
         if not self._log_queue:
@@ -246,25 +342,80 @@ class BotSetupCore:
         if controls is None:
             return
         batch = 0
-        while self._log_queue and batch < 20:
-            timestamp, message, color = self._log_queue.popleft()
-            controls.append(
-                ft.Text(
-                    f"[{timestamp}] {message}",
-                    color=color,
-                    font_family="Consolas",
-                    size=13,
-                    selectable=True,
-                )
-            )
+        while self._log_queue and batch < 50:
+            rec = self._log_queue.popleft()
+            self._log_records.append(rec)
+            if self._passes_filter(rec):
+                controls.append(self._make_log_control(rec))
             batch += 1
+        self._update_counter()
         self._safe_update()
+
+    def _rebuild_console(self):
+        controls = self.console.controls
+        if controls is None:
+            return
+        controls.clear()
+        for rec in self._log_records:
+            if self._passes_filter(rec):
+                controls.append(self._make_log_control(rec))
+        self._update_counter()
+        self._safe_update()
+
+    def _update_counter(self):
+        total = len(self._log_records)
+        if self._console_filter != "all" or self._console_search:
+            visible = len(self.console.controls or [])
+            self.console_counter_text.value = f"{visible}/{total} lineas"
+        else:
+            self.console_counter_text.value = (
+                f"{total} linea" if total == 1 else f"{total} lineas"
+            )
+
+    def _on_console_search(self, e):
+        self._console_search = (e.control.value or "").lower().strip()
+        self._rebuild_console()
+
+    def _on_console_filter(self, e):
+        self._console_filter = e.control.value or "all"
+        self._rebuild_console()
+
+    def _copy_logs(self, _):
+        if not self._log_records:
+            return
+        text = "\n".join(r["text"] for r in self._log_records)
+        try:
+            import tkinter as tk
+
+            root = tk.Tk()
+            root.withdraw()
+            root.clipboard_clear()
+            root.clipboard_append(text)
+            root.update()
+            root.destroy()
+            self.log(
+                f"Copiadas {len(self._log_records)} lineas al portapapeles.",
+                ft.Colors.GREEN_200,
+            )
+        except Exception as ex:
+            self.log(f"No se pudo copiar al portapapeles: {ex}", ft.Colors.RED_400)
 
     def clear_console(self, _):
         self._log_queue.clear()
+        self._log_records.clear()
         controls = self.console.controls
         if controls is not None:
             controls.clear()
+        self._update_counter()
+        self._safe_update()
+
+    def _scroll_to_bottom(self, _=None):
+        self.console.auto_scroll = True
+        try:
+            self.console.scroll_to(offset=-1, duration=200)
+        except Exception:
+            pass
+        self.scroll_bottom_btn.visible = False
         self._safe_update()
 
     def _on_console_scroll(self, e):
@@ -274,7 +425,9 @@ class BotSetupCore:
             near_bottom = e.pixels >= e.max_scroll_extent - 50
             if near_bottom != self.console.auto_scroll:
                 self.console.auto_scroll = near_bottom
-                self._safe_update()
+            if self.scroll_bottom_btn.visible == near_bottom:
+                self.scroll_bottom_btn.visible = not near_bottom
+            self._safe_update()
 
     def update_states(self):
         has_project = bool(self.project_path_text.value)

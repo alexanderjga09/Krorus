@@ -658,9 +658,8 @@ class BotSetupActions:
         filepath = base / f"console_log_{timestamp}.txt"
         try:
             with open(filepath, "w", encoding="utf-8") as f:
-                for ctrl in self.console.controls:
-                    if isinstance(ctrl, ft.Text) and ctrl.value:
-                        f.write(ctrl.value + "\n")
+                for rec in self._log_records:
+                    f.write(rec["text"] + "\n")
             self.log(f"Logs guardados en {filepath.name}", ft.Colors.GREEN_200)
         except Exception as ex:
             self.log(f"Error al guardar logs: {ex}", ft.Colors.RED_400)

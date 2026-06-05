@@ -285,18 +285,33 @@ class BotSetupUI:
                                             "Consola de Salida",
                                             size=18,
                                             weight=ft.FontWeight.W_500,
-                                            expand=True,
                                         ),
+                                        self.console_counter_text,
+                                        self.console_search_field,
+                                        self.console_filter_dropdown,
+                                        self.copy_logs_btn,
                                         self.save_logs_btn,
                                         ft.IconButton(
                                             ft.Icons.DELETE_SWEEP,
                                             on_click=self.clear_console,
                                             tooltip="Limpiar Consola",
                                         ),
-                                    ]
+                                    ],
+                                    wrap=True,
+                                    vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                                 ft.Container(
-                                    content=self.console,
+                                    content=ft.Stack(
+                                        [
+                                            self.console,
+                                            ft.Container(
+                                                content=self.scroll_bottom_btn,
+                                                right=8,
+                                                bottom=8,
+                                            ),
+                                        ],
+                                        expand=True,
+                                    ),
                                     bgcolor=ft.Colors.BLACK,
                                     padding=10,
                                     border_radius=5,
