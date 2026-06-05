@@ -36,6 +36,7 @@ class BotSetupCore:
         self._config_changed = False
         self._log_queue: collections.deque = collections.deque()
         self._update_lock = threading.Lock()
+        self._auto_scroll = True
 
         self.project_path_text = ft.TextField(
             label="Carpeta del Proyecto",
@@ -67,7 +68,10 @@ class BotSetupCore:
             prefix_icon=ft.Icons.GROUPS,
         )
 
-        self.console = ft.ListView(expand=True, spacing=2, auto_scroll=True)
+        self.console = ft.ListView(
+            expand=True, spacing=2, auto_scroll=False,
+            on_scroll=self._on_console_scroll,
+        )
 
         self.status_dot = ft.Icon(ft.Icons.CIRCLE, color=ft.Colors.GREY_400, size=12)
         self.status_text = ft.Text("Esperando directorio...", color=ft.Colors.GREY_400)
@@ -242,8 +246,6 @@ class BotSetupCore:
         controls = self.console.controls
         if controls is None:
             return
-        if len(controls) > 500:
-            del controls[:50]
         batch = 0
         while self._log_queue and batch < 20:
             timestamp, message, color = self._log_queue.popleft()
@@ -257,14 +259,20 @@ class BotSetupCore:
                 )
             )
             batch += 1
+        if self._auto_scroll:
+            self.console.scroll_to(offset=-1, duration=0)
         self._safe_update()
 
     def clear_console(self, _):
         self._log_queue.clear()
         controls = self.console.controls
-        if controls:
+        if controls is not None:
             controls.clear()
         self._safe_update()
+
+    def _on_console_scroll(self, e):
+        if e.pixels is not None and e.max_scroll_extent is not None:
+            self._auto_scroll = e.pixels >= e.max_scroll_extent - 50
 
     def update_states(self):
         has_project = bool(self.project_path_text.value)
