@@ -94,7 +94,7 @@ class BotSetupCore:
                 ft.dropdown.Option("warn", "Avisos"),
                 ft.dropdown.Option("error", "Errores"),
             ],
-            on_change=self._on_console_filter,
+            on_select=self._on_console_filter,
         )
         self.console_counter_text = ft.Text(
             "0 lineas",
