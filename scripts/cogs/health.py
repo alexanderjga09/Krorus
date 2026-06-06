@@ -29,12 +29,10 @@ class HealthCheck(commands.Cog):
         name="ping", description="Verifica que el bot esta funcionando."
     )
     async def ping(self, ctx: discord.ApplicationContext):
-        await ctx.defer(ephemeral=False)
         await ctx.respond(f"🏓 Pong! Latencia: {round(self.client.latency * 1000)}ms")
 
     @commands.slash_command(name="status", description="Muestra el estado del bot.")
     async def status(self, ctx: discord.ApplicationContext):
-        await ctx.defer(ephemeral=False)
         rate_limited = self.client.is_rate_limited()
         guild = ctx.guild
         total_members = guild.member_count if guild else 0

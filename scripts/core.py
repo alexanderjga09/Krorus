@@ -398,28 +398,19 @@ class Krorus(commands.Bot):
     async def on_application_command_error(
         self, ctx: discord.ApplicationContext, error: discord.DiscordException
     ) -> None:
-        if isinstance(error, discord.HTTPException) and error.status in (404, 10062):
-            logger.warning(f"[Cmd] Interaction expirada o invalida: {error}")
-            try:
-                await ctx.respond(
-                    "⚠️ La interaccion expiro. Intenta de nuevo.",
-                    ephemeral=True,
+        if isinstance(error, discord.ApplicationCommandInvokeError):
+            error = error.original
+        if isinstance(error, discord.HTTPException):
+            if error.code == 10062 or error.status == 404:
+                logger.warning(f"[Cmd] Interaction expirada o invalida: {error}")
+            else:
+                logger.error(
+                    f"[Cmd] HTTP {error.status} en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {error}"
                 )
-            except Exception:
-                pass
-        elif isinstance(error, discord.ApplicationCommandInvokeError):
-            logger.error(
-                f"[Cmd] Error interno en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {error.original}"
-            )
-            try:
-                await ctx.respond(
-                    "❌ Ocurrio un error interno al ejecutar el comando.",
-                    ephemeral=True,
-                )
-            except Exception:
-                pass
         else:
-            logger.error(f"[Cmd] Error no manejado: {error}")
+            logger.error(
+                f"[Cmd] Error no manejado en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {error}"
+            )
 
     async def on_ready(self):
         await self.change_presence(status=discord.Status.invisible)
