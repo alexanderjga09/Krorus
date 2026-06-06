@@ -109,7 +109,7 @@ class Krorus(commands.Bot):
         intents.message_content = True
         intents.members = True
         intents.voice_states = True
-        super().__init__(intents=intents)
+        super().__init__(intents=intents, sync_commands=True)
         self.allowed_guild_id = int(os.getenv("ALLOWED_GUILD_ID", "0"))
         self.http_session: aiohttp.ClientSession | None = None
         self.bot_config: dict = {}
@@ -394,6 +394,32 @@ class Krorus(commands.Bot):
                 logger.info("HTTP client session cerrada.")
         finally:
             await super().close()
+
+    async def on_application_command_error(
+        self, ctx: discord.ApplicationContext, error: discord.DiscordException
+    ) -> None:
+        if isinstance(error, discord.HTTPException) and error.status in (404, 10062):
+            logger.warning(f"[Cmd] Interaction expirada o invalida: {error}")
+            try:
+                await ctx.respond(
+                    "⚠️ La interaccion expiro. Intenta de nuevo.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
+        elif isinstance(error, discord.ApplicationCommandInvokeError):
+            logger.error(
+                f"[Cmd] Error interno en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {error.original}"
+            )
+            try:
+                await ctx.respond(
+                    "❌ Ocurrio un error interno al ejecutar el comando.",
+                    ephemeral=True,
+                )
+            except Exception:
+                pass
+        else:
+            logger.error(f"[Cmd] Error no manejado: {error}")
 
     async def on_ready(self):
         await self.change_presence(status=discord.Status.invisible)
