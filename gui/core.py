@@ -94,7 +94,7 @@ class BotSetupCore:
                 ft.dropdown.Option("warn", "Avisos"),
                 ft.dropdown.Option("error", "Errores"),
             ],
-            on_select=self._on_console_filter,
+            on_change=self._on_console_filter,
         )
         self.console_counter_text = ft.Text(
             "0 lineas",
@@ -317,7 +317,7 @@ class BotSetupCore:
                 "level": level,
             }
         )
-        self._flush_console()
+        self._run_on_thread(self._flush_console)
 
     def _passes_filter(self, rec: dict) -> bool:
         if self._console_filter != "all" and rec["level"] != self._console_filter:
