@@ -409,6 +409,9 @@ class BotSetupCore:
             self._safe_update()
 
     def update_states(self):
+        self._run_on_thread(self._do_update_states)
+
+    def _do_update_states(self):
         has_project = bool(self.project_path_text.value)
         is_running = self.is_process_running()
 
