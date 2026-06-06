@@ -301,17 +301,7 @@ class BotSetupUI:
                                     vertical_alignment=ft.CrossAxisAlignment.CENTER,
                                 ),
                                 ft.Container(
-                                    content=ft.Stack(
-                                        [
-                                            self.console,
-                                            ft.Container(
-                                                content=self.scroll_bottom_btn,
-                                                right=8,
-                                                bottom=8,
-                                            ),
-                                        ],
-                                        expand=True,
-                                    ),
+                                    content=self.console,
                                     bgcolor=ft.Colors.BLACK,
                                     padding=10,
                                     border_radius=5,

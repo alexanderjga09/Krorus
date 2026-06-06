@@ -109,15 +109,6 @@ class BotSetupCore:
             tooltip="Copiar todo al portapapeles",
             on_click=self._copy_logs,
         )
-        self.scroll_bottom_btn = ft.IconButton(
-            icon=ft.Icons.ARROW_DOWNWARD,
-            icon_color=ft.Colors.WHITE,
-            bgcolor=ft.Colors.BLUE_ACCENT,
-            tooltip="Ir al final",
-            on_click=self._scroll_to_bottom,
-            visible=False,
-        )
-
         self.status_dot = ft.Icon(ft.Icons.CIRCLE, color=ft.Colors.GREY_400, size=12)
         self.status_text = ft.Text("Esperando directorio...", color=ft.Colors.GREY_400)
         self.progress_bar = ft.ProgressBar(visible=False, color=ft.Colors.BLUE_ACCENT)
@@ -409,27 +400,12 @@ class BotSetupCore:
         self._update_counter()
         self._safe_update()
 
-    def _scroll_to_bottom(self, _=None):
-        self.console.auto_scroll = True
-        try:
-            self.console.scroll_to(delta=9999999, duration=200)
-        except Exception:
-            pass
-        self.scroll_bottom_btn.visible = False
-        self._safe_update()
-
     def _on_console_scroll(self, e):
         if e.pixels is None or e.max_scroll_extent is None:
             return
         near_bottom = e.pixels >= e.max_scroll_extent - 50
-        changed = False
         if near_bottom != self.console.auto_scroll:
             self.console.auto_scroll = near_bottom
-            changed = True
-        if self.scroll_bottom_btn.visible == near_bottom:
-            self.scroll_bottom_btn.visible = not near_bottom
-            changed = True
-        if changed:
             self._safe_update()
 
     def update_states(self):
