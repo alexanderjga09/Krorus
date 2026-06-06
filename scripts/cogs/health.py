@@ -30,17 +30,14 @@ class HealthCheck(commands.Cog):
     )
     async def ping(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=False)
-        try:
-            latency = round(self.client.latency * 1000)
-            await ctx.respond(f"🏓 Pong! Latencia: {latency}ms")
-        except discord.HTTPException:
-            await ctx.respond(f"🏓 Pong! Latencia: {round(self.client.latency * 1000)}ms")
+        await ctx.respond(f"🏓 Pong! Latencia: {round(self.client.latency * 1000)}ms")
 
     @commands.slash_command(name="status", description="Muestra el estado del bot.")
     async def status(self, ctx: discord.ApplicationContext):
         await ctx.defer(ephemeral=False)
         rate_limited = self.client.is_rate_limited()
-        total_members = sum(g.member_count or 0 for g in self.client.guilds)
+        guild = ctx.guild
+        total_members = guild.member_count if guild else 0
 
         embed = discord.Embed(
             title="🤖 Estado del Bot",
@@ -57,10 +54,7 @@ class HealthCheck(commands.Cog):
         )
         embed.add_field(name="🚦 Rate Limit", value="🟢 Normal" if not rate_limited else "🔴 Rate Limited", inline=True)
         embed.add_field(
-            name="🖥️ Servidores", value=str(len(self.client.guilds)), inline=True
-        )
-        embed.add_field(
-            name="👥 Usuarios totales", value=str(total_members), inline=True
+            name="👥 Usuarios", value=str(total_members), inline=True
         )
         embed.add_field(
             name="🐍 Python",
@@ -77,10 +71,7 @@ class HealthCheck(commands.Cog):
             inline=True,
         )
 
-        try:
-            await ctx.respond(embed=embed)
-        except discord.HTTPException:
-            await ctx.respond(embed=embed)
+        await ctx.respond(embed=embed)
 
 
 def setup(client):
