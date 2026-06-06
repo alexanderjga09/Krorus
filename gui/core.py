@@ -412,7 +412,7 @@ class BotSetupCore:
     def _scroll_to_bottom(self, _=None):
         self.console.auto_scroll = True
         try:
-            self.console.scroll_to(offset=-1, duration=200)
+            self.console.scroll_to(delta=9999999, duration=200)
         except Exception:
             pass
         self.scroll_bottom_btn.visible = False
