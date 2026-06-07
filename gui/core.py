@@ -94,8 +94,8 @@ class BotSetupCore:
                 ft.dropdown.Option("warn", "Avisos"),
                 ft.dropdown.Option("error", "Errores"),
             ],
-            on_select=self._on_console_filter,
         )
+        self.console_filter_dropdown.on_select = self._on_console_filter
         self.console_counter_text = ft.Text(
             "0 lineas",
             size=12,
@@ -308,7 +308,7 @@ class BotSetupCore:
                 "level": level,
             }
         )
-        self._run_on_thread(self._flush_console)
+        self._run_on_main(self._flush_console)
 
     def _passes_filter(self, rec: dict) -> bool:
         if self._console_filter != "all" and rec["level"] != self._console_filter:
@@ -343,6 +343,7 @@ class BotSetupCore:
         self._safe_update()
 
     def _rebuild_console(self):
+        self._flush_console()
         controls = self.console.controls
         if controls is None:
             return
@@ -368,7 +369,8 @@ class BotSetupCore:
         self._rebuild_console()
 
     def _on_console_filter(self, e):
-        self._console_filter = e.control.value or "all"
+        val = e.data if hasattr(e, "data") else None
+        self._console_filter = val or "all"
         self._rebuild_console()
 
     def _copy_logs(self, _):
