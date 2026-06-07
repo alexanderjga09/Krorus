@@ -409,7 +409,18 @@ class BotSetupCore:
             self._safe_update()
 
     def update_states(self):
-        self._run_on_thread(self._do_update_states)
+        self._run_on_main(self._do_update_states)
+
+    def _run_on_main(self, func):
+        def wrapper():
+            try:
+                func()
+            except Exception as ex:
+                logger.debug("Error en _run_on_main: %s", ex)
+        try:
+            self.page.run_thread(wrapper)
+        except Exception:
+            wrapper()
 
     def _do_update_states(self):
         has_project = bool(self.project_path_text.value)

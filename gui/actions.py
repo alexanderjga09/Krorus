@@ -80,6 +80,7 @@ class BotSetupActions:
         if not project:
             return []
 
+        my_pid = os.getpid()
         project_path = Path(project).resolve()
         project_str = str(project_path).lower()
         pids: list[int] = []
@@ -92,7 +93,10 @@ class BotSetupActions:
                     text=True,
                 )
                 if res.stdout:
-                    return [int(pid) for pid in res.stdout.strip().split()]
+                    return [
+                        int(pid) for pid in res.stdout.strip().split()
+                        if int(pid) != my_pid
+                    ]
             except Exception:
                 pass
             return []
@@ -112,11 +116,14 @@ class BotSetupActions:
                 if "python" not in image:
                     continue
                 try:
+                    pid_val = int(pid_str)
+                    if pid_val == my_pid:
+                        continue
                     cmd_res = subprocess.run(
                         [
                             "wmic",
                             "process",
-                            f"where ProcessId={pid_str}",
+                            f"where ProcessId={pid_val}",
                             "get",
                             "CommandLine",
                             "/format:value",
@@ -131,7 +138,7 @@ class BotSetupActions:
                         or "main.py" in cmdline
                         or "krorus" in cmdline
                     ):
-                        pids.append(int(pid_str))
+                        pids.append(pid_val)
                 except Exception:
                     pass
         except Exception:
@@ -139,9 +146,9 @@ class BotSetupActions:
 
         return pids
 
-    def _kill_existing_bot_processes(self) -> list:
+    def _kill_existing_bot_processes(self) -> set[int]:
         pids = self._find_bot_pids()
-        killed_pids = []
+        killed_pids: set[int] = set()
         for pid in pids:
             try:
                 subprocess.run(
@@ -149,7 +156,7 @@ class BotSetupActions:
                     capture_output=True,
                     creationflags=CREATE_NO_WINDOW,
                 )
-                killed_pids.append(pid)
+                killed_pids.add(pid)
             except Exception:
                 pass
         return killed_pids
@@ -375,6 +382,7 @@ class BotSetupActions:
                 )
                 with self.process_lock:
                     self.running_process = process
+                self.is_busy = False
                 self.update_states()
 
                 if process.stdout:
@@ -398,7 +406,7 @@ class BotSetupActions:
         threading.Thread(target=target, daemon=True).start()
 
     def start_bot(self, _):
-        if self.is_process_running():
+        if self.is_busy or self.is_process_running():
             return
 
         python_bin = self._venv_python()
@@ -431,6 +439,9 @@ class BotSetupActions:
                     creationflags=CREATE_NO_WINDOW,
                 )
             time.sleep(0.5)
+
+        self.is_busy = True
+        self._do_update_states()
 
         self.clear_console(None)
         self.log("Iniciando bot...", ft.Colors.GREEN_200)
@@ -467,14 +478,19 @@ class BotSetupActions:
                 subprocess.run(["kill", "-TERM", str(pid)], capture_output=True)
 
     def _cleanup_process_ref(self):
+        zombie_pids = self._kill_existing_bot_processes()
         with self.process_lock:
             if self.running_process:
                 try:
+                    pid = self.running_process.pid
                     if self.running_process.poll() is None:
-                        self._kill_process_tree(self.running_process.pid)
+                        self._kill_process_tree(pid)
+                    zombie_pids.discard(pid)
                 except Exception:
                     pass
                 self.running_process = None
+        if zombie_pids:
+            time.sleep(0.3)
         self.update_states()
 
     def stop_bot(self):
