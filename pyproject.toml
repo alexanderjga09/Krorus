@@ -1,0 +1,21 @@
+# Configuración de herramientas de desarrollo (lint/test).
+# NOTA: este pyproject NO declara el paquete del bot; los crates de Rust se
+# construyen con maturin desde crates/*/pyproject.toml. Aquí solo viven las
+# configuraciones de tooling compartidas por la CI y el entorno local.
+
+[tool.ruff]
+target-version = "py313"
+line-length = 100
+exclude = [".venv", "venv", "crates", "build", "dist", "data"]
+
+[tool.ruff.lint]
+# Reglas de alto valor para detectar errores reales (pyflakes + errores de
+# sintaxis/lógica de pycodestyle). Se evita el ruido de estilo puro.
+select = ["E4", "E7", "E9", "F"]
+ignore = [
+    "E741",  # nombres de variable ambiguos (l, I, O) — aceptado en este código
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"

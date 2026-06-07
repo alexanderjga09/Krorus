@@ -38,7 +38,28 @@ logging.basicConfig(
 )
 logger = logging.getLogger("krorus")
 
-GROQ_CLIENT = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+def _build_groq_client() -> AsyncGroq | None:
+    """Crea el cliente de Groq de forma tolerante.
+
+    Si la API key no esta configurada (o el constructor falla) devuelve None en
+    lugar de abortar el arranque del bot. Las funciones que dependen de Groq
+    deben tratar el cliente None como "IA no disponible".
+    """
+    api_key = os.getenv("GROQ_API_KEY")
+    if not api_key:
+        logger.warning(
+            "⚠️ GROQ_API_KEY no configurada — el analisis de IA y la "
+            "transcripcion de audio quedaran deshabilitados."
+        )
+        return None
+    try:
+        return AsyncGroq(api_key=api_key)
+    except Exception as e:
+        logger.error(f"No se pudo inicializar el cliente Groq: {e}")
+        return None
+
+
+GROQ_CLIENT = _build_groq_client()
 
 # Leer configuracion de BD y validar
 BD = try_read_row()
@@ -88,7 +109,7 @@ class Krorus(commands.Bot):
         intents.message_content = True
         intents.members = True
         intents.voice_states = True
-        super().__init__(intents=intents)
+        super().__init__(intents=intents, sync_commands=True)
         self.allowed_guild_id = int(os.getenv("ALLOWED_GUILD_ID", "0"))
         self.http_session: aiohttp.ClientSession | None = None
         self.bot_config: dict = {}
@@ -132,6 +153,17 @@ class Krorus(commands.Bot):
         with self._rate_limit_lock:
             self._rate_limit_until = time.time() + seconds
         logger.warning(f"[RATE LIMIT] Activado por {seconds}s: {reason}")
+
+    def is_rate_limited(self) -> bool:
+        """True si el bot esta actualmente en pausa por rate limit."""
+        with self._rate_limit_lock:
+            return time.time() < self._rate_limit_until
+
+    def _maybe_rate_limit(self, exc: Exception) -> None:
+        """Si la excepcion es un 429 de Discord, activa backpressure global."""
+        if isinstance(exc, discord.HTTPException) and getattr(exc, "status", None) == 429:
+            retry = getattr(exc, "retry_after", None) or 30
+            self.set_rate_limit(int(retry), "Discord HTTP 429 al enviar alerta")
 
     # ── Sistema de buffer/sala de espera para Groq ────────────────────────
 
@@ -222,7 +254,7 @@ class Krorus(commands.Bot):
                 for m in sorted_msgs:
                     member = m.guild.get_member(m.author.id)
                     if member and not discord.utils.get(
-                        member.roles, id=PROTECTED_ROLE_ID
+                        member.roles, id=self.protected_role_id
                     ):
                         chain_log = get_chain_log()
                         chain_log.add_alert(
@@ -309,11 +341,8 @@ class Krorus(commands.Bot):
             if old_val != new_val:
                 logger.info(f"[CONFIG] '{key}' cambiado a {new_val}.")
 
-        # Actualizar fuente unica
+        # Fuente unica de verdad: el estado vive en self.bot_config.
         self.bot_config = new_config
-        # Tambien actualizar global para compatibilidad
-        global BOT_CONFIG
-        BOT_CONFIG = new_config
 
     async def reload_config(self):
         """Recarga manualmente la configuracion desde archivo."""
@@ -325,8 +354,7 @@ class Krorus(commands.Bot):
         return False
 
     def reload_data(self):
-        """Recarga STAFF_CHANNEL_ID y PROTECTED_ROLE_ID desde la BD sin reiniciar."""
-        global STAFF_CHANNEL_ID, PROTECTED_ROLE_ID
+        """Recarga el canal de staff y el rol protegido desde la BD sin reiniciar."""
         row = read_row()
         try:
             new_staff = row[0][0]
@@ -334,8 +362,6 @@ class Krorus(commands.Bot):
         except Exception:
             new_staff, new_role = 0, 0
 
-        STAFF_CHANNEL_ID = new_staff
-        PROTECTED_ROLE_ID = new_role
         self.staff_channel_id = new_staff
         self.protected_role_id = new_role
 
@@ -344,7 +370,8 @@ class Krorus(commands.Bot):
             whisper_cog.bd = (new_staff, new_role)
 
         logger.info(
-            f"[RELOAD] Datos recargados: canal={STAFF_CHANNEL_ID}, rol={PROTECTED_ROLE_ID}"
+            f"[RELOAD] Datos recargados: canal={self.staff_channel_id}, "
+            f"rol={self.protected_role_id}"
         )
 
     async def setup_hook(self) -> None:
@@ -367,6 +394,22 @@ class Krorus(commands.Bot):
                 logger.info("HTTP client session cerrada.")
         finally:
             await super().close()
+
+    async def on_application_command_error(
+        self, ctx: discord.ApplicationContext, error: discord.DiscordException
+    ) -> None:
+        exc = error.original if isinstance(error, discord.ApplicationCommandInvokeError) else error
+        if isinstance(exc, discord.HTTPException):
+            if exc.code == 10062 or exc.status == 404:
+                logger.warning(f"[Cmd] Interaction expirada o invalida: {exc}")
+            else:
+                logger.error(
+                    f"[Cmd] HTTP {exc.status} en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {exc}"
+                )
+        else:
+            logger.error(
+                f"[Cmd] Error no manejado en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {exc}"
+            )
 
     async def on_ready(self):
         await self.change_presence(status=discord.Status.invisible)
@@ -403,7 +446,7 @@ class Krorus(commands.Bot):
             logger.info(f"✅ Bot anadido a servidor autorizado: {guild.name}")
 
     async def _send_alert(self, message_or_text, code, title, details, file=None):
-        staff_channel = self.get_channel(STAFF_CHANNEL_ID)
+        staff_channel = self.get_channel(self.staff_channel_id)
         if not isinstance(staff_channel, discord.TextChannel):
             logger.error("Canal de staff no valido")
             return
@@ -442,6 +485,7 @@ class Krorus(commands.Bot):
                 )
                 return
             except Exception as e:
+                self._maybe_rate_limit(e)
                 logger.exception(f"Error al enviar alerta: {e}")
                 return
         else:
@@ -454,6 +498,7 @@ class Krorus(commands.Bot):
                     code_str, embed=embed, **Krorus._file_kwargs(file)
                 )
             except Exception as e:
+                self._maybe_rate_limit(e)
                 logger.exception(f"Error al enviar alerta sin mensaje: {e}")
             return
 
@@ -492,7 +537,7 @@ class Krorus(commands.Bot):
                 vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
                 msg = Message(message)
                 results = await msg._ref_message(
-                    PROTECTED_ROLE_ID,
+                    self.protected_role_id,
                     GROQ_CLIENT,
                     vt_api_key,
                     session,
@@ -521,7 +566,7 @@ class Krorus(commands.Bot):
                 msg = Message(message)
                 results = await msg._mention_user(
                     message.mentions,
-                    PROTECTED_ROLE_ID,
+                    self.protected_role_id,
                     GROQ_CLIENT,
                     vt_api_key,
                     session,
@@ -547,7 +592,7 @@ class Krorus(commands.Bot):
             if not isinstance(mention_author, discord.Member):
                 mention_author = message.guild.get_member(mention_author.id)
             if not mention_author or not discord.utils.get(
-                mention_author.roles, id=PROTECTED_ROLE_ID
+                mention_author.roles, id=self.protected_role_id
             ):
                 return
             # Autor es protegido → cae a sección 3 para análisis completo
@@ -559,7 +604,7 @@ class Krorus(commands.Bot):
             if not member:
                 return
 
-        if not discord.utils.get(member.roles, id=PROTECTED_ROLE_ID):
+        if not discord.utils.get(member.roles, id=self.protected_role_id):
             # No es protegido, pero si tiene un buffer activo (por mención/reply
             # reciente a un protegido), sus mensajes posteriores también se acumulan
             if (
@@ -624,6 +669,7 @@ class Krorus(commands.Bot):
                             GROQ_CLIENT,
                             message.author,
                             timeout=self.get_config("groq_timeout", 30.0),
+                            attachment=att,
                         )
                         if result:
                             code, title, details, audio_file = result
@@ -691,11 +737,11 @@ class Krorus(commands.Bot):
             return
 
         author_is_protected = bool(
-            discord.utils.get(member.roles, id=PROTECTED_ROLE_ID)
+            discord.utils.get(member.roles, id=self.protected_role_id)
         )
 
         mentions_protected = any(
-            discord.utils.get(getattr(m, "roles", []), id=PROTECTED_ROLE_ID)
+            discord.utils.get(getattr(m, "roles", []), id=self.protected_role_id)
             for m in after.mentions
             if m.id != after.author.id
         )
@@ -705,13 +751,17 @@ class Krorus(commands.Bot):
             resolved = getattr(after.reference, "resolved", None)
             if isinstance(resolved, discord.Message):
                 ref_roles = getattr(resolved.author, "roles", [])
-                replies_to_protected = any(r.id == PROTECTED_ROLE_ID for r in ref_roles)
+                replies_to_protected = any(
+                    r.id == self.protected_role_id for r in ref_roles
+                )
 
         if not replies_to_protected and after.reference and after.reference.message_id:
             try:
                 ref_msg = await after.channel.fetch_message(after.reference.message_id)
                 ref_roles = getattr(ref_msg.author, "roles", [])
-                replies_to_protected = any(r.id == PROTECTED_ROLE_ID for r in ref_roles)
+                replies_to_protected = any(
+                    r.id == self.protected_role_id for r in ref_roles
+                )
             except discord.NotFound:
                 pass
 
@@ -798,7 +848,7 @@ class Krorus(commands.Bot):
                 logger.info(f"{member.display_name} salio de {before.channel.name}")
 
             if self.get_config("monitor_voice_channels", True):
-                await self.check_voice_channels(member.guild, PROTECTED_ROLE_ID)
+                await self.check_voice_channels(member.guild, self.protected_role_id)
 
 
 def main() -> None:

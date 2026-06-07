@@ -1,6 +1,16 @@
-import sys
 import flet as ft
-from gui import main
+
+from .core import BotSetupCore
+from .ui import BotSetupUI
+from .actions import BotSetupActions
+
+
+class BotSetupApp(BotSetupCore, BotSetupUI, BotSetupActions):
+    pass
+
+
+def main(page: ft.Page):
+    BotSetupApp(page)
 
 
 if __name__ == "__main__":
@@ -17,4 +27,3 @@ if __name__ == "__main__":
             ft.run(main)
         except Exception as e:
             print("No se pudo iniciar la interfaz Flet:", e)
-            sys.exit(1)

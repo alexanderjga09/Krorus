@@ -14,14 +14,16 @@ __pycache__/
 
 # Entornos virtuales
 .venv/
+.venv_gui/
 venv/
 env/
 
-# Datos generados
-data/alert_domains.json
-data/ignorewords.json
+# Datos generados en runtime (NO versionar).
+# Nota: data/alert_domains.json y data/ignorewords.json SÍ se versionan como
+# datos semilla iniciales, por eso no aparecen aquí.
 data/logs.json
 data/misconduct_cache.json
+data/misconduct_cache_stats.json
 logs.json
 backups/
 
