@@ -398,18 +398,17 @@ class Krorus(commands.Bot):
     async def on_application_command_error(
         self, ctx: discord.ApplicationContext, error: discord.DiscordException
     ) -> None:
-        if isinstance(error, discord.ApplicationCommandInvokeError):
-            error = error.original
-        if isinstance(error, discord.HTTPException):
-            if error.code == 10062 or error.status == 404:
-                logger.warning(f"[Cmd] Interaction expirada o invalida: {error}")
+        exc = error.original if isinstance(error, discord.ApplicationCommandInvokeError) else error
+        if isinstance(exc, discord.HTTPException):
+            if exc.code == 10062 or exc.status == 404:
+                logger.warning(f"[Cmd] Interaction expirada o invalida: {exc}")
             else:
                 logger.error(
-                    f"[Cmd] HTTP {error.status} en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {error}"
+                    f"[Cmd] HTTP {exc.status} en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {exc}"
                 )
         else:
             logger.error(
-                f"[Cmd] Error no manejado en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {error}"
+                f"[Cmd] Error no manejado en {ctx.command.qualified_name if ctx.command else 'desconocido'}: {exc}"
             )
 
     async def on_ready(self):
