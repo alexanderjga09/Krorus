@@ -85,37 +85,30 @@ class BotSetupUI:
         )
 
         self.switch_log_multimedia = ft.Switch(
-            label="Registrar mensajes multimedia (imagenes, videos, archivos)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_transcribe_audio = ft.Switch(
-            label="Transcribir audios automaticamente (usa Groq AI)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_log_message_edits = ft.Switch(
-            label="Registrar y analizar mensajes editados en tiempo real",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_enable_whisper = ft.Switch(
-            label="Habilitar comando /whisper (mensajes secretos cifrados)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_monitor_voice = ft.Switch(
-            label="Monitorizar canales de voz (alertas de supervision en vivo)",
             value=True,
             on_change=self._mark_config_changed,
         )
         self.switch_detailed_logging = ft.Switch(
-            label="Registro detallado (modo debug, informacion extendida)",
             value=False,
             on_change=self._mark_config_changed,
         )
         self.switch_check_exif = ft.Switch(
-            label="Verificar metadatos EXIF en archivos (GPS, camara, etc.)",
             value=True,
             on_change=self._mark_config_changed,
         )
@@ -126,6 +119,12 @@ class BotSetupUI:
             on_click=self.reset_config_defaults,
         )
 
+        def _sw(name: str, ref: ft.Switch) -> ft.Row:
+            return ft.Row(
+                [ref, ft.Text(name, expand=True, selectable=True)],
+                vertical_alignment=ft.CrossAxisAlignment.CENTER,
+            )
+
         features_list = ft.ListView(
             [
                 ft.Text("Funciones disponibles", size=16, weight=ft.FontWeight.W_600),
@@ -135,12 +134,12 @@ class BotSetupUI:
                     color=ft.Colors.GREY,
                 ),
                 ft.Divider(),
-                self.switch_log_multimedia,
-                self.switch_transcribe_audio,
-                self.switch_log_message_edits,
-                self.switch_monitor_voice,
-                self.switch_check_exif,
-                self.switch_detailed_logging,
+                _sw("Registrar mensajes multimedia (imagenes, videos, archivos)", self.switch_log_multimedia),
+                _sw("Transcribir audios automaticamente (usa Groq AI)", self.switch_transcribe_audio),
+                _sw("Registrar y analizar mensajes editados en tiempo real", self.switch_log_message_edits),
+                _sw("Monitorizar canales de voz (alertas de supervision en vivo)", self.switch_monitor_voice),
+                _sw("Verificar metadatos EXIF en archivos (GPS, camara, etc.)", self.switch_check_exif),
+                _sw("Registro detallado (modo debug, informacion extendida)", self.switch_detailed_logging),
                 ft.Divider(),
                 ft.Text(
                     "Funciones importantes (no desactivables):",
@@ -153,7 +152,7 @@ class BotSetupUI:
                     color=ft.Colors.GREY,
                 ),
                 ft.Divider(),
-                self.switch_enable_whisper,
+                _sw("Habilitar comando /whisper (mensajes secretos cifrados)", self.switch_enable_whisper),
                 reset_btn,
                 ft.Divider(),
                 ft.Text("Cache de Groq", size=14, weight=ft.FontWeight.W_600),
@@ -233,10 +232,42 @@ class BotSetupUI:
         tab_labels = [
             ("Principal", ft.Icons.SETTINGS),
             ("Funciones", ft.Icons.TOGGLE_ON),
+            ("Respaldos", ft.Icons.BACKUP),
         ]
+
+        backup_content = ft.Column(
+            [
+                ft.Row(
+                    [
+                        ft.Text("Respaldo de Base de Datos", size=16, weight=ft.FontWeight.W_600),
+                        self.backup_open_folder_btn,
+                    ],
+                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                ),
+                ft.Text(
+                    "Administra los respaldos locales de settings.db",
+                    size=12,
+                    color=ft.Colors.GREY,
+                ),
+                ft.Divider(),
+                ft.Row(
+                    [self.backup_create_btn, self.backup_restore_btn],
+                    alignment=ft.MainAxisAlignment.START,
+                ),
+                self.backup_status_text,
+                ft.Divider(),
+                ft.Text("Respaldos disponibles:", size=14, weight=ft.FontWeight.W_600),
+                self.backup_list_view,
+            ],
+            expand=True,
+            spacing=6,
+            padding=10,
+        )
+
         tab_views = [
             ft.Column([settings_column, buttons_column]),
             ft.Column([features_list], expand=True),
+            backup_content,
         ]
 
         self.tabs_control = self._build_tabs(tab_labels, tab_views)
@@ -323,6 +354,7 @@ class BotSetupUI:
         except Exception:
             pass
         self.update_states()
+        self._refresh_backup_list_ui()
 
     def load_env_file(self, folder_path):
         env_path = Path(folder_path) / ".env"

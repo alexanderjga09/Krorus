@@ -193,7 +193,14 @@ class BotSetupCore:
 
         self.restore_backup_btn = ft.Button("Restaurar respaldo", icon=ft.Icons.RESTORE, on_click=self._restore_backup, disabled=True)
 
+        self.backup_list_view = ft.ListView(expand=True, spacing=2, padding=10)
+        self.backup_status_text = ft.Text("", size=12, color=ft.Colors.GREY)
+        self.backup_create_btn = ft.Button("Crear respaldo", icon=ft.Icons.BACKUP, on_click=self._create_backup)
+        self.backup_restore_btn = ft.Button("Restaurar seleccionado", icon=ft.Icons.RESTORE, on_click=self._restore_selected_backup, disabled=True)
+        self.backup_open_folder_btn = ft.IconButton(ft.Icons.FOLDER_OPEN, tooltip="Abrir carpeta de respaldos", on_click=self._open_backup_folder)
+
         self._bot_start_time = None
+        self._selected_backup_path = None
 
         self.setup_ui()
         self._restore_last_path()

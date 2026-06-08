@@ -72,6 +72,7 @@ class BotSetupActions:
                     except Exception:
                         pass
                     self.update_states()
+                    self._refresh_backup_list_ui()
         except Exception:
             logger.debug("No se pudo restaurar la ultima ruta de proyecto", exc_info=True)
 
@@ -622,6 +623,91 @@ class BotSetupActions:
             self.log("Respaldo restaurado correctamente.", ft.Colors.GREEN_400)
         except Exception as ex:
             self.log(f"Error al restaurar respaldo: {ex}", ft.Colors.RED_400)
+
+    def _backup_dir(self) -> Path:
+        from scripts.modules.database import BACKUP_DIR
+        return BACKUP_DIR
+
+    def _open_backup_folder(self, e):
+        path = self._backup_dir()
+        if path.exists():
+            os.startfile(str(path))
+
+    def _create_backup(self, e):
+        try:
+            from scripts.modules.database import backup_db
+            ok = backup_db()
+            if ok:
+                self.log("Respaldo creado exitosamente.", ft.Colors.GREEN_400)
+            else:
+                self.log("No se pudo crear el respaldo.", ft.Colors.RED_400)
+        except Exception as ex:
+            self.log(f"Error al crear respaldo: {ex}", ft.Colors.RED_400)
+        self._refresh_backup_list_ui()
+
+    def _restore_selected_backup(self, e):
+        path = getattr(self, "_selected_backup_path", None)
+        if not path:
+            self.log("Selecciona un respaldo de la lista.", ft.Colors.YELLOW_400)
+            return
+        import shutil
+        from scripts.modules.database import DB_PATH
+        try:
+            shutil.copy2(path, DB_PATH)
+            self.log(f"Restaurado desde: {path.name}", ft.Colors.GREEN_400)
+        except Exception as ex:
+            self.log(f"Error al restaurar: {ex}", ft.Colors.RED_400)
+        self._refresh_backup_list_ui()
+
+    def _on_backup_click(self, path: Path):
+        def _inner(e):
+            self._selected_backup_path = path
+            self.backup_restore_btn.disabled = False
+            for c in (self.backup_list_view.controls or []):
+                if isinstance(c, ft.Container):
+                    c.bgcolor = None
+            e.control.bgcolor = ft.Colors.BLUE_900
+            self._safe_update()
+        return _inner
+
+    def _refresh_backup_list_ui(self):
+        controls = self.backup_list_view.controls
+        if controls is None:
+            return
+        controls.clear()
+        backup_dir = self._backup_dir()
+        if not backup_dir.exists():
+            self.backup_status_text.value = "No existe el directorio de respaldos."
+            self.backup_restore_btn.disabled = True
+            self._safe_update()
+            return
+        files = sorted(
+            backup_dir.glob("settings_*.db"),
+            key=lambda p: p.stat().st_mtime,
+            reverse=True,
+        )
+        if not files:
+            self.backup_status_text.value = "No hay respaldos disponibles."
+            self.backup_restore_btn.disabled = True
+            self._safe_update()
+            return
+        self.backup_status_text.value = f"{len(files)} respaldo(s) encontrado(s)"
+        from datetime import datetime
+        for f in files:
+            mtime = datetime.fromtimestamp(f.stat().st_mtime)
+            size = f.stat().st_size
+            label = f"{mtime.strftime('%Y-%m-%d %H:%M:%S')}  |  {size:,} bytes"
+            controls.append(
+                ft.Container(
+                    content=ft.Text(label, size=13, font_family="Consolas", selectable=True),
+                    padding=6,
+                    border_radius=4,
+                    ink=True,
+                    on_click=self._on_backup_click(f),
+                )
+            )
+        self.backup_restore_btn.disabled = True
+        self._safe_update()
 
     def _toggle_theme(self, e):
         self.page.theme_mode = (
