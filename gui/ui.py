@@ -19,20 +19,16 @@ class BotSetupUI:
         tabs = [ft.Tab(label=label, icon=icon) for label, icon in labels]
         try:
             return ft.Tabs(
+                length=len(tabs),
                 selected_index=0,
                 animation_duration=300,
-                tabs=tabs,
-                controls=views,
-                expand=True,
-            )
-        except Exception:
-            pass
-        try:
-            return ft.Tabs(
-                selected_index=0,
-                animation_duration=300,
-                tabs=tabs,
-                views=views,
+                content=ft.Column(
+                    expand=True,
+                    controls=[
+                        ft.TabBar(tabs=tabs),
+                        ft.TabBarView(expand=True, controls=views),
+                    ],
+                ),
                 expand=True,
             )
         except Exception:

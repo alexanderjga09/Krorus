@@ -13,6 +13,7 @@ logger = logging.getLogger("krorus.gui")
 CREATE_NO_WINDOW = 0x08000000 if sys.platform == "win32" else 0
 _ICON_PATH = Path(__file__).parent.parent / "krorus.ico"
 _CONFIG_FILE = Path.home() / ".krorus_gui_config.json"
+_MAX_CONSOLE_RECORDS = 1000
 
 
 class BotSetupCore:
@@ -339,6 +340,10 @@ class BotSetupCore:
             if self._passes_filter(rec):
                 controls.append(self._make_log_control(rec))
             batch += 1
+        if len(self._log_records) > _MAX_CONSOLE_RECORDS:
+            excess = len(self._log_records) - _MAX_CONSOLE_RECORDS
+            del self._log_records[:excess]
+            del controls[:excess]
         self._update_counter()
         self._safe_update()
 
