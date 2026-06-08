@@ -3,6 +3,7 @@ import datetime
 import hashlib
 import json
 import logging
+import logging.handlers
 import os
 import threading
 import time
@@ -32,10 +33,43 @@ from .modules.message import Message
 load_dotenv()
 
 # Logging setup
+_log_dir = Path(__file__).parent.parent / "data"
+_log_dir.mkdir(parents=True, exist_ok=True)
+
+
+class _CleanErrorFilter(logging.Filter):
+    _NOISY = (
+        "discord.client",
+        "discord.gateway",
+        "discord.http",
+        "aiohttp.client",
+    )
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        if record.name not in self._NOISY:
+            return True
+        msg = record.getMessage()
+        if "Attempting a reconnect" in msg:
+            record.exc_info = None
+            record.exc_text = None
+        return True
+
+
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    handlers=[
+        logging.StreamHandler(),
+        logging.handlers.RotatingFileHandler(
+            _log_dir / "krorus.log",
+            maxBytes=5 * 1024 * 1024,
+            backupCount=3,
+            encoding="utf-8",
+        ),
+    ],
 )
+for name in _CleanErrorFilter._NOISY:
+    logging.getLogger(name).addFilter(_CleanErrorFilter())
 logger = logging.getLogger("krorus")
 
 def _build_groq_client() -> AsyncGroq | None:
