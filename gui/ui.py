@@ -235,33 +235,37 @@ class BotSetupUI:
             ("Respaldos", ft.Icons.BACKUP),
         ]
 
-        backup_content = ft.Column(
-            [
-                ft.Row(
-                    [
-                        ft.Text("Respaldo de Base de Datos", size=16, weight=ft.FontWeight.W_600),
-                        self.backup_open_folder_btn,
-                    ],
-                    alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
-                ),
-                ft.Text(
-                    "Administra los respaldos locales de settings.db",
-                    size=12,
-                    color=ft.Colors.GREY,
-                ),
-                ft.Divider(),
-                ft.Row(
-                    [self.backup_create_btn, self.backup_restore_btn],
-                    alignment=ft.MainAxisAlignment.START,
-                ),
-                self.backup_status_text,
-                ft.Divider(),
-                ft.Text("Respaldos disponibles:", size=14, weight=ft.FontWeight.W_600),
-                self.backup_list_view,
-            ],
-            expand=True,
-            spacing=6,
+        backup_content = ft.Container(
+            content=ft.Column(
+                [
+                    ft.Row(
+                        [
+                            ft.Text("Respaldo de Base de Datos", size=16, weight=ft.FontWeight.W_600),
+                            self.backup_open_folder_btn,
+                        ],
+                        alignment=ft.MainAxisAlignment.SPACE_BETWEEN,
+                    ),
+                    ft.Text(
+                        "Administra los respaldos locales de settings.db",
+                        size=12,
+                        color=ft.Colors.GREY,
+                    ),
+                    ft.Divider(),
+                    ft.Row(
+                        [self.backup_create_btn, self.backup_restore_btn],
+                        wrap=True,
+                        alignment=ft.MainAxisAlignment.START,
+                    ),
+                    self.backup_status_text,
+                    ft.Divider(),
+                    ft.Text("Respaldos disponibles:", size=14, weight=ft.FontWeight.W_600),
+                    self.backup_list_view,
+                ],
+                expand=True,
+                spacing=6,
+            ),
             padding=10,
+            expand=True,
         )
 
         tab_views = [

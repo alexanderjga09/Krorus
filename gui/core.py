@@ -37,6 +37,7 @@ class BotSetupCore:
         self._config_changed = False
         self._log_queue: collections.deque = collections.deque()
         self._update_lock = threading.Lock()
+        self._console_lock = threading.Lock()
         self._log_records: list[dict] = []
         self._console_filter = "all"
         self._console_search = ""
@@ -196,7 +197,7 @@ class BotSetupCore:
         self.backup_list_view = ft.ListView(expand=True, spacing=2, padding=10)
         self.backup_status_text = ft.Text("", size=12, color=ft.Colors.GREY)
         self.backup_create_btn = ft.Button("Crear respaldo", icon=ft.Icons.BACKUP, on_click=self._create_backup)
-        self.backup_restore_btn = ft.Button("Restaurar seleccionado", icon=ft.Icons.RESTORE, on_click=self._restore_selected_backup, disabled=True)
+        self.backup_restore_btn = ft.Button("Restaurar", icon=ft.Icons.RESTORE, on_click=self._restore_selected_backup, disabled=True)
         self.backup_open_folder_btn = ft.IconButton(ft.Icons.FOLDER_OPEN, tooltip="Abrir carpeta de respaldos", on_click=self._open_backup_folder)
 
         self._bot_start_time = None
@@ -335,35 +336,37 @@ class BotSetupCore:
         )
 
     def _flush_console(self):
-        if not self._log_queue:
-            return
-        controls = self.console.controls
-        if controls is None:
-            return
-        batch = 0
-        while self._log_queue and batch < 50:
-            rec = self._log_queue.popleft()
-            self._log_records.append(rec)
-            if self._passes_filter(rec):
-                controls.append(self._make_log_control(rec))
-            batch += 1
-        if len(self._log_records) > _MAX_CONSOLE_RECORDS:
-            excess = len(self._log_records) - _MAX_CONSOLE_RECORDS
-            del self._log_records[:excess]
-            del controls[:excess]
-        self._update_counter()
+        with self._console_lock:
+            if not self._log_queue:
+                return
+            controls = self.console.controls
+            if controls is None:
+                return
+            batch = 0
+            while self._log_queue and batch < 50:
+                rec = self._log_queue.popleft()
+                self._log_records.append(rec)
+                if self._passes_filter(rec):
+                    controls.append(self._make_log_control(rec))
+                batch += 1
+            if len(self._log_records) > _MAX_CONSOLE_RECORDS:
+                excess = len(self._log_records) - _MAX_CONSOLE_RECORDS
+                del self._log_records[:excess]
+                del controls[:excess]
+            self._update_counter()
         self._safe_update()
 
     def _rebuild_console(self):
         self._flush_console()
-        controls = self.console.controls
-        if controls is None:
-            return
-        controls.clear()
-        for rec in self._log_records:
-            if self._passes_filter(rec):
-                controls.append(self._make_log_control(rec))
-        self._update_counter()
+        with self._console_lock:
+            controls = self.console.controls
+            if controls is None:
+                return
+            controls.clear()
+            for rec in self._log_records:
+                if self._passes_filter(rec):
+                    controls.append(self._make_log_control(rec))
+            self._update_counter()
         self._safe_update()
 
     def _update_counter(self):
@@ -406,12 +409,13 @@ class BotSetupCore:
             self.log(f"No se pudo copiar al portapapeles: {ex}", ft.Colors.RED_400)
 
     def clear_console(self, _):
-        self._log_queue.clear()
-        self._log_records.clear()
-        controls = self.console.controls
-        if controls is not None:
-            controls.clear()
-        self._update_counter()
+        with self._console_lock:
+            self._log_queue.clear()
+            self._log_records.clear()
+            controls = self.console.controls
+            if controls is not None:
+                controls.clear()
+            self._update_counter()
         self._safe_update()
 
     def _on_console_scroll(self, e):
