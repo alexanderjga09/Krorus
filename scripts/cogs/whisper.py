@@ -11,10 +11,20 @@ _MAX_WHISPER_LENGTH = 2000
 
 
 class DecryptButton(discord.ui.View):
-    def __init__(self, encrypted_message: str, recipient_id: int):
+    def __init__(
+        self,
+        encrypted_message: str,
+        recipient_id: int,
+        client=None,
+        intercepted: bool = False,
+        sender_mention: str = "",
+    ):
         super().__init__(timeout=180)
         self.encrypted_message = encrypted_message
         self.recipient_id = recipient_id
+        self.client = client
+        self.intercepted = intercepted
+        self.sender_mention = sender_mention
         self._unlocked = False
 
     @discord.ui.button(label="Descifrar Mensaje", style=discord.ButtonStyle.primary)
@@ -42,7 +52,29 @@ class DecryptButton(discord.ui.View):
             )
             self._unlocked = True
             button.disabled = True
-            await interaction.edit_original_response(view=self)
+            # Editar el mensaje DM que contiene el boton (no la respuesta
+            # efimera de esta interaccion) para que quede deshabilitado.
+            try:
+                if interaction.message:
+                    await interaction.message.edit(view=self)
+            except Exception:
+                logger.debug(
+                    "No se pudo desactivar el boton del whisper", exc_info=True
+                )
+
+            # Si el whisper involucra a un protegido, avisar al staff de que
+            # el destinatario lo descifro (lectura confirmada).
+            if self.intercepted and self.client is not None:
+                try:
+                    await self.client._send_alert(
+                        interaction.user.mention,
+                        "",
+                        "​Mensaje secreto descifrado",
+                        f"**Remitente:** {self.sender_mention}\n"
+                        f"**Contenido:**\n```{decrypted_text[:950]}```",
+                    )
+                except Exception:
+                    logger.exception("No se pudo notificar el descifrado al staff")
         except Exception:
             await interaction.response.send_message(
                 "Error al descifrar el mensaje. Puede que la clave sea incorrecta o el mensaje este dañado.",
@@ -104,7 +136,13 @@ class Whisper(commands.Cog):
 
         try:
             encrypted_msg: str = encrypt_message(mensaje, destinatario.id)
-            view = DecryptButton(encrypted_msg, destinatario.id)
+            view = DecryptButton(
+                encrypted_msg,
+                destinatario.id,
+                client=self.client,
+                intercepted=bool(involves_protected),
+                sender_mention=ctx.author.mention,
+            )
             await destinatario.send(embed=embed, view=view)
         except discord.Forbidden:
             await ctx.edit(

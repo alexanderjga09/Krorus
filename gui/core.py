@@ -202,6 +202,7 @@ class BotSetupCore:
 
         self._bot_start_time = None
         self._selected_backup_path = None
+        self._uptime_timer_started = False
 
         self.setup_ui()
         self._restore_last_path()

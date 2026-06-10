@@ -14,7 +14,7 @@ _ALERTS_PER_PAGE = 5
 def _build_pages(
     member: discord.Member,
     alerts: list,
-    chain_log,
+    pardoned_indices: set[int],
 ) -> list[discord.Embed]:
     """Convierte la lista de alertas en páginas de embed listas para el Paginator."""
     total = len(alerts)
@@ -32,7 +32,7 @@ def _build_pages(
             fecha = ts.strftime("%d-%m-%Y")
             reason = alert["data"]["reason"]
             url = alert["data"]["jump_url"]
-            pardoned = chain_log.is_pardoned(alert["index"])
+            pardoned = alert["index"] in pardoned_indices
             estado = "⚪ Perdonada | " if pardoned else ""
             lines.append(
                 f"`{code}` ({hora} | {fecha})\n"
@@ -76,7 +76,7 @@ class CheckUser(commands.Cog):
             )
             return
 
-        pages = _build_pages(member, alerts, chain_log)
+        pages = _build_pages(member, alerts, set(chain_log.pardoned_indices()))
 
         if len(pages) == 1:
             # Una sola página: no hacen falta botones de navegación
@@ -99,11 +99,13 @@ class CheckUser(commands.Cog):
     @discord.option("reason", str, description="Motivo del perdón")
     async def pardon(self, ctx: discord.ApplicationContext, code: str, reason: str):
         chain_log = get_chain_log()
-        block_index = chain_log.find_alert_index_by_code(code)
+        # only_active=False: si la alerta existe pero ya fue perdonada, se
+        # informa "ya fue perdonada" en lugar de "no se encontró".
+        block_index = chain_log.find_alert_index_by_code(code, only_active=False)
 
         if block_index is None:
             await ctx.respond(
-                f"No se encontró una alerta activa con el código `{code}`.",
+                f"No se encontró una alerta con el código `{code}`.",
                 ephemeral=True,
             )
             return

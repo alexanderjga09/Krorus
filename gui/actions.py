@@ -84,68 +84,65 @@ class BotSetupActions:
         my_pid = os.getpid()
         project_path = Path(project).resolve()
         project_str = str(project_path).lower()
-        pids: list[int] = []
+
+        def is_ours(cmdline: str) -> bool:
+            # Solo procesos cuyo cmdline referencia ESTE proyecto. Aceptar
+            # cualquier "main.py" mataria bots/scripts de otros proyectos.
+            low = (cmdline or "").lower()
+            return project_str in low and "main.py" in low
 
         if sys.platform != "win32":
             try:
                 res = subprocess.run(
-                    ["pgrep", "-f", "python.*main\\.py|krorus"],
+                    ["pgrep", "-af", "python"],
                     capture_output=True,
                     text=True,
                 )
-                if res.stdout:
-                    return [
-                        int(pid) for pid in res.stdout.strip().split()
-                        if int(pid) != my_pid
-                    ]
+                pids: list[int] = []
+                for line in (res.stdout or "").splitlines():
+                    pid_str, _, cmdline = line.strip().partition(" ")
+                    if (
+                        pid_str.isdigit()
+                        and int(pid_str) != my_pid
+                        and is_ours(cmdline)
+                    ):
+                        pids.append(int(pid_str))
+                return pids
             except Exception:
-                pass
-            return []
+                return []
 
+        # Windows: una sola consulta CIM via PowerShell. wmic esta deprecado y
+        # ya no existe en builds recientes de Windows 11; ademas se lanzaba un
+        # proceso wmic por cada PID encontrado.
         try:
+            ps_cmd = (
+                "Get-CimInstance Win32_Process -Filter \"Name LIKE '%python%'\" | "
+                "Select-Object ProcessId,CommandLine | ConvertTo-Json -Compress"
+            )
             res = subprocess.run(
-                ["tasklist", "/FO", "CSV", "/NH"],
+                ["powershell", "-NoProfile", "-Command", ps_cmd],
                 capture_output=True,
                 text=True,
                 creationflags=CREATE_NO_WINDOW,
             )
-            for line in res.stdout.strip().splitlines():
-                parts = line.strip('"').split('","')
-                if len(parts) < 2:
-                    continue
-                pid_str, image = parts[1], parts[0].lower()
-                if "python" not in image:
-                    continue
-                try:
-                    pid_val = int(pid_str)
-                    if pid_val == my_pid:
-                        continue
-                    cmd_res = subprocess.run(
-                        [
-                            "wmic",
-                            "process",
-                            f"where ProcessId={pid_val}",
-                            "get",
-                            "CommandLine",
-                            "/format:value",
-                        ],
-                        capture_output=True,
-                        text=True,
-                        creationflags=CREATE_NO_WINDOW,
-                    )
-                    cmdline = cmd_res.stdout.lower()
-                    if (
-                        project_str in cmdline
-                        or "main.py" in cmdline
-                        or "krorus" in cmdline
-                    ):
-                        pids.append(pid_val)
-                except Exception:
-                    pass
+            raw = (res.stdout or "").strip()
+            if not raw:
+                return []
+            data = json.loads(raw)
+            if isinstance(data, dict):
+                data = [data]
+            pids = []
+            for proc in data:
+                pid_val = proc.get("ProcessId")
+                if (
+                    isinstance(pid_val, int)
+                    and pid_val != my_pid
+                    and is_ours(proc.get("CommandLine") or "")
+                ):
+                    pids.append(pid_val)
+            return pids
         except Exception:
-            pass
-
-        return pids
+            return []
 
     def _kill_existing_bot_processes(self) -> set[int]:
         pids = self._find_bot_pids()
@@ -213,10 +210,21 @@ class BotSetupActions:
         }
         cfg_dir = Path(project) / "data"
         cfg_dir.mkdir(parents=True, exist_ok=True)
+        cfg_path = cfg_dir / "bot_config.json"
+        # Merge con el archivo existente: la GUI solo conoce los switches, pero
+        # el archivo puede tener claves manuales (groq_timeout, etc.) que no
+        # deben perderse al auto-guardar.
+        existing: dict = {}
         try:
-            (cfg_dir / "bot_config.json").write_text(
-                json.dumps(cfg, indent=4), encoding="utf-8"
-            )
+            if cfg_path.exists():
+                loaded = json.loads(cfg_path.read_text(encoding="utf-8"))
+                if isinstance(loaded, dict):
+                    existing = loaded
+        except Exception:
+            existing = {}
+        existing.update(cfg)
+        try:
+            cfg_path.write_text(json.dumps(existing, indent=4), encoding="utf-8")
             self._config_changed = False
         except Exception as e:
             self.log(f"Error al guardar bot_config.json: {e}", ft.Colors.RED_400)
@@ -349,11 +357,48 @@ class BotSetupActions:
             self.run_command(
                 [str(pip_exe), "install", "-r", str(req_file)],
                 cwd=self.project_path_text.value,
-                on_finish=self.after_setup_complete,
+                on_finish=self.after_requirements,
             )
         else:
             self.log("No se encontro requirements.txt", ft.Colors.ORANGE_400)
+            self.after_requirements(0)
+
+    def _crate_dirs(self, project: str) -> list[str]:
+        """Carpetas de crates con pyproject.toml (extensiones nativas del bot)."""
+        return [
+            str(p.parent)
+            for p in sorted((Path(project) / "crates").glob("*/pyproject.toml"))
+        ]
+
+    def after_requirements(self, rc):
+        if rc != 0:
+            self.after_setup_complete(rc)
+            return
+        # Las extensiones nativas (chainlog_rs, exif_rs) son obligatorias para
+        # el bot; sin este paso una instalacion nueva fallaba con
+        # ModuleNotFoundError al iniciar.
+        crate_dirs = self._crate_dirs(self.project_path_text.value)
+        if not crate_dirs:
             self.after_setup_complete(0)
+            return
+        self.log(
+            "Compilando extensiones nativas de Rust (puede tardar unos minutos)...",
+            ft.Colors.BLUE_200,
+        )
+        self.run_command(
+            [str(self._venv_pip()), "install", "--upgrade", *crate_dirs],
+            cwd=self.project_path_text.value,
+            on_finish=self.after_crates,
+        )
+
+    def after_crates(self, rc):
+        if rc != 0:
+            self.log(
+                "Error compilando las extensiones de Rust. Verifica que Rust este "
+                "instalado y en el PATH: https://rustup.rs",
+                ft.Colors.RED_400,
+            )
+        self.after_setup_complete(rc)
 
     def after_setup_complete(self, rc):
         self.is_busy = False
@@ -503,6 +548,26 @@ class BotSetupActions:
             self._restart_requested = True
         self.stop_bot()
 
+    def _stream_pip(self, args: list[str], cwd: str) -> int:
+        """Ejecuta pip mostrando su salida en la consola. Devuelve el returncode."""
+        proc = subprocess.Popen(
+            args,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+            cwd=cwd,
+            creationflags=CREATE_NO_WINDOW,
+        )
+        if proc.stdout:
+            for line in proc.stdout:
+                line = line.rstrip()
+                if line:
+                    self.log(line)
+            proc.stdout.close()
+        return proc.wait()
+
     def _update_dependencies(self, repo_path: str):
         pip_exe = self._venv_pip()
         req_file = Path(repo_path) / "requirements.txt"
@@ -510,23 +575,23 @@ class BotSetupActions:
             return
         self.log("Verificando nuevas dependencias...", ft.Colors.BLUE_200)
         try:
-            proc = subprocess.Popen(
-                [str(pip_exe), "install", "-r", str(req_file)],
-                stdout=subprocess.PIPE,
-                stderr=subprocess.STDOUT,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                cwd=repo_path,
-                creationflags=CREATE_NO_WINDOW,
+            self._stream_pip(
+                [str(pip_exe), "install", "-r", str(req_file)], cwd=repo_path
             )
-            if proc.stdout:
-                for line in proc.stdout:
-                    line = line.rstrip()
-                    if line:
-                        self.log(line)
-                proc.stdout.close()
-            proc.wait()
+            # Recompilar tambien las extensiones nativas: un git pull puede
+            # haber cambiado el codigo Rust.
+            crate_dirs = self._crate_dirs(repo_path)
+            if crate_dirs:
+                self.log("Recompilando extensiones nativas (Rust)...", ft.Colors.BLUE_200)
+                rc = self._stream_pip(
+                    [str(pip_exe), "install", "--upgrade", *crate_dirs],
+                    cwd=repo_path,
+                )
+                if rc != 0:
+                    self.log(
+                        "Error recompilando extensiones de Rust.", ft.Colors.RED_400
+                    )
+                    return
             self.log("Dependencias al dia.", ft.Colors.GREEN_200)
         except Exception as e:
             self.log(f"Error actualizando dependencias: {e}", ft.Colors.ORANGE_400)
@@ -716,6 +781,12 @@ class BotSetupActions:
         self._safe_update()
 
     def _start_uptime_timer(self):
+        # Un solo hilo para toda la vida de la GUI: antes se creaba un hilo
+        # infinito nuevo en cada arranque del bot (fuga de hilos).
+        if getattr(self, "_uptime_timer_started", False):
+            return
+        self._uptime_timer_started = True
+
         def _loop():
             while True:
                 with self.process_lock:

@@ -35,7 +35,7 @@ if not exist ".venv_gui\Scripts\python.exe" (
 .venv_gui\Scripts\python -c "import flet" >nul 2>&1
 if errorlevel 1 (
     echo Instalando Flet en .venv_gui...
-    .venv_gui\Scripts\python -m pip install --quiet flet
+    .venv_gui\Scripts\python -m pip install --quiet flet==0.84.0
     if errorlevel 1 (
         echo [ERROR] No se pudo instalar Flet.
         pause

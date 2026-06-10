@@ -70,7 +70,3 @@ class HealthCheck(commands.Cog):
         )
 
         await ctx.respond(embed=embed)
-
-
-def setup(client):
-    client.add_cog(HealthCheck(client))

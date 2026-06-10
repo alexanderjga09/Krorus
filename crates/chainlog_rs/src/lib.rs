@@ -1,9 +1,9 @@
 use chrono::{SecondsFormat, Utc};
 use pyo3::prelude::*;
-use pyo3::types::{PyBytes, PyDict, PyList, PyModule, PyString};
+use pyo3::types::{PyDict, PyList, PyModule, PyString};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
@@ -193,13 +193,24 @@ impl ChainLog {
         Ok(None)
     }
 
+    /// Devuelve los índices de bloques de alerta que tienen un perdón asociado.
+    /// Permite que el lado Python haga chequeos masivos en O(1) por alerta en
+    /// lugar de llamar a `is_pardoned` (que recorre la cadena) por cada una.
+    fn pardoned_indices(&self) -> PyResult<Vec<usize>> {
+        let inner = self.inner.lock().map_err(|e| {
+            PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Mutex lock error: {}", e))
+        })?;
+        Ok(self._pardoned_set(&inner).into_iter().collect())
+    }
+
     fn get_active_alerts(&self, py: Python) -> PyResult<PyObject> {
         let inner = self.inner.lock().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Mutex lock error: {}", e))
         })?;
+        let pardoned = self._pardoned_set(&inner);
         let list = PyList::empty_bound(py);
         for (i, block) in inner.chain.iter().enumerate() {
-            if block.block_type == "alert" && !self._is_pardoned_locked(&inner, i) {
+            if block.block_type == "alert" && !pardoned.contains(&i) {
                 let dict = PyDict::new_bound(py);
                 dict.set_item("index", block.index)?;
                 dict.set_item("timestamp", &block.timestamp)?;
@@ -255,12 +266,17 @@ impl ChainLog {
         let inner = self.inner.lock().map_err(|e| {
             PyErr::new::<pyo3::exceptions::PyRuntimeError, _>(format!("Mutex lock error: {}", e))
         })?;
+        let pardoned = if include_pardoned {
+            HashSet::new()
+        } else {
+            self._pardoned_set(&inner)
+        };
         let mut result: HashMap<String, Vec<PyObject>> = HashMap::new();
         for (i, block) in inner.chain.iter().enumerate() {
             if block.block_type != "alert" {
                 continue;
             }
-            if !include_pardoned && self._is_pardoned_locked(&inner, i) {
+            if !include_pardoned && pardoned.contains(&i) {
                 continue;
             }
             let user_id = match block.data.get("user_id").and_then(|v| v.as_str()) {
@@ -343,39 +359,18 @@ impl ChainLog {
     }
 }
 
-// Bridge for EXIF processing moved to exif_rs. Delegates to Python module when available.
-#[pyfunction(signature = (file_data, filename, _content_type=None))]
-fn check_archive_exif(
-    file_data: &[u8],
-    filename: &str,
-    _content_type: Option<&str>,
-) -> PyResult<PyObject> {
-    Python::with_gil(|py| {
-        // Try to delegate to exif_rs Python module if available
-        if let Ok(exif_module) = PyModule::import_bound(py, "exif_rs") {
-            if let Ok(func) = exif_module.getattr("check_archive_exif") {
-                // Convert Rust types to Python objects using Bound API
-                let py_bytes = PyBytes::new_bound(py, file_data);
-                let py_filename = PyString::new_bound(py, filename);
-                // Use py.None() for optional argument
-                let res = func.call1((py_bytes, py_filename, py.None()))?;
-                return Ok(res.into());
-            }
-        }
-        // Fallback: return empty report structure
-        let dict = PyDict::new_bound(py);
-        dict.set_item("archive_filename", filename)?;
-        dict.set_item("files_checked", 0)?;
-        dict.set_item("files_with_exif", 0)?;
-        dict.set_item("has_sensitive_data", false)?;
-        dict.set_item("has_high_risk", false)?;
-        dict.set_item("findings", PyList::empty_bound(py))?;
-        Ok(dict.into())
-    })
-}
-
 // Internal helpers
 impl ChainLog {
+    fn _pardoned_set(&self, inner: &ChainLogInner) -> HashSet<usize> {
+        inner
+            .chain
+            .iter()
+            .filter(|b| b.block_type == "pardon")
+            .filter_map(|b| b.data.get("original_index").and_then(|v| v.as_u64()))
+            .map(|v| v as usize)
+            .collect()
+    }
+
     fn _is_pardoned_locked(&self, inner: &ChainLogInner, block_index: usize) -> bool {
         inner.chain.iter().any(|block| {
             block.block_type == "pardon"
@@ -471,6 +466,5 @@ fn json_value_to_py(py: Python, value: &serde_json::Value) -> PyResult<PyObject>
 #[pymodule]
 fn chainlog_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<ChainLog>()?;
-    m.add_function(wrap_pyfunction!(check_archive_exif, m)?)?;
     Ok(())
 }

@@ -13,6 +13,11 @@ _MISCONDUCT_CACHE_PATH = _DATA_DIR / "misconduct_cache.json"
 _MISCONDUCT_STATS_PATH = _DATA_DIR / "misconduct_cache_stats.json"
 _MISCONDUCT_CACHE_HITS = 0
 _MISCONDUCT_CACHE_MISSES = 0
+# Debounce de la escritura de stats: como máximo una escritura cada N segundos.
+# Sin esto, cada mensaje analizado producía una escritura síncrona a disco
+# dentro del event loop del bot.
+_STATS_SAVE_INTERVAL = 5.0
+_STATS_LAST_SAVE = 0.0
 
 
 def _load_misconduct_cache() -> dict[str, dict]:
@@ -61,7 +66,11 @@ def _load_misconduct_stats() -> tuple[int, int]:
         return 0, 0
 
 
-def _save_misconduct_stats() -> None:
+def _save_misconduct_stats(force: bool = False) -> None:
+    global _STATS_LAST_SAVE
+    now = time.time()
+    if not force and now - _STATS_LAST_SAVE < _STATS_SAVE_INTERVAL:
+        return
     try:
         _MISCONDUCT_STATS_PATH.parent.mkdir(parents=True, exist_ok=True)
         _MISCONDUCT_STATS_PATH.write_text(
@@ -71,12 +80,13 @@ def _save_misconduct_stats() -> None:
             ),
             encoding="utf-8",
         )
+        _STATS_LAST_SAVE = now
     except Exception as e:
         logger.warning(f"[Cache] Error guardando misconduct_cache_stats.json: {e}")
 
 
 def record_cache_hit() -> None:
-    """Registra un acierto de caché y lo persiste a disco.
+    """Registra un acierto de caché y lo persiste a disco (con debounce).
 
     La persistencia permite que otro proceso (p. ej. la GUI) lea las
     estadísticas reales en lugar de su copia local, que siempre sería 0.
@@ -87,7 +97,7 @@ def record_cache_hit() -> None:
 
 
 def record_cache_miss() -> None:
-    """Registra un fallo de caché y lo persiste a disco."""
+    """Registra un fallo de caché y lo persiste a disco (con debounce)."""
     global _MISCONDUCT_CACHE_MISSES
     _MISCONDUCT_CACHE_MISSES += 1
     _save_misconduct_stats()
@@ -114,7 +124,7 @@ def clear_misconduct_cache() -> None:
     _MISCONDUCT_CACHE_HITS = 0
     _MISCONDUCT_CACHE_MISSES = 0
     _save_misconduct_cache({})
-    _save_misconduct_stats()
+    _save_misconduct_stats(force=True)
 
 
 _MISCONDUCT_CACHE = _load_misconduct_cache()

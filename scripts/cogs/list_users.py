@@ -12,13 +12,13 @@ _USERS_PER_PAGE = 6
 _RANK_EMOJI = {1: "🥇", 2: "🥈", 3: "🥉"}
 
 
-def _enrich_users(chain_log, alerts_by_user: dict) -> list:
+def _enrich_users(alerts_by_user: dict, pardoned_indices: set[int]) -> list:
     result = []
     for uid, alerts in alerts_by_user.items():
         if not alerts:
             continue
 
-        active = sum(1 for a in alerts if not chain_log.is_pardoned(a["index"]))
+        active = sum(1 for a in alerts if a["index"] not in pardoned_indices)
         if active == 0:
             continue
 
@@ -112,7 +112,7 @@ class ListUsers(commands.Cog):
             await ctx.respond("✅ No hay usuarios con alertas activas.", ephemeral=True)
             return
 
-        enriched = _enrich_users(chain_log, alerts_by_user)
+        enriched = _enrich_users(alerts_by_user, set(chain_log.pardoned_indices()))
 
         if not enriched:
             await ctx.respond("✅ No hay usuarios con alertas activas.", ephemeral=True)

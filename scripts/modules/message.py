@@ -37,8 +37,13 @@ _URL_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
 logger = logging.getLogger(__name__)
 
 vt_semaphore = asyncio.Semaphore(4)
+# Tras un 429 de VirusTotal se pausan TODOS los escaneos hasta este timestamp,
+# en lugar de dormir 60s reteniendo el semáforo.
+_VT_COOLDOWN_UNTIL = 0.0
 _JSON_CACHE = {}
 _JSON_CACHE_MAX = 128
+# Máximo de URLs por mensaje que se consultan a VirusTotal.
+_VT_MAX_URLS_PER_MESSAGE = 5
 
 
 class GroqRateLimiter:
@@ -87,6 +92,13 @@ class Message:
         """
         text = _INVISIBLE_RE.sub("", text)
         return unicodedata.normalize("NFC", text)
+
+    @staticmethod
+    def meaningful_text(content: str) -> str:
+        """Texto del mensaje sin URLs ni invite links (mide el contenido real)."""
+        text = _URL_RE.sub("", content or "")
+        text = _DISCORD_INVITE_RE.sub("", text)
+        return text.strip()
 
     # ── Helpers de adjuntos ────────────────────────────────────────────────
 
@@ -209,7 +221,14 @@ class Message:
             del _JSON_CACHE[oldest_key]
         return data
 
-    async def _has_analyzable_text(self) -> bool:
+    async def _has_analyzable_text(self, min_len: int = 3) -> bool:
+        """Determina si el mensaje contiene texto que merezca análisis de IA.
+
+        min_len controla la longitud mínima del texto (sin URLs). Para el buffer
+        por lotes se usa min_len=1: los mensajes muy cortos ("p", "u"...) se
+        acumulan igualmente para detectar insultos deletreados en varios
+        mensajes; el buffer decide al final si el texto combinado se analiza.
+        """
         content = self.msg.content or ""
         if not content:
             return False
@@ -238,10 +257,8 @@ class Message:
         else:
             non_whitelisted_urls = []
 
-        text = _URL_RE.sub("", content)
-        text = _DISCORD_INVITE_RE.sub("", text)
-        stripped = text.strip()
-        if len(stripped) > 2:
+        stripped = Message.meaningful_text(content)
+        if len(stripped) >= min_len:
             return True
 
         if not stripped and urls:
@@ -296,50 +313,75 @@ class Message:
             return True, "discord.gg", invite_url
 
         # ── URLs estándar con protocolo ──────────────────────────────────
-        url_match = _URL_RE.search(content)
-        if not url_match:
+        # Se revisan TODAS las URLs del mensaje, no solo la primera: de lo
+        # contrario bastaría con poner una URL benigna delante para evadir.
+        urls = _URL_RE.findall(content)
+        if not urls:
             return False, None, None
-
-        url = url_match.group(0)
-        self.scanned_url = url
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower()
-        if ":" in domain:
-            domain = domain.split(":")[0]
-
-        logger.debug(f"[DEBUG] URL: {url} | Dominio extraído: {domain}")
 
         whitelist_domains = self._load_json_list("whitelist.json")
         alert_domains = self._load_json_list("alert_domains.json")
 
-        # 1. Si está en whitelist → omitir
-        if self._domain_matches(domain, whitelist_domains):
-            logger.info(f"[INFO] Dominio {domain} en whitelist -> omitido")
-            return False, domain, url
+        pending_vt: list[tuple[str, str]] = []
+        last_domain, last_url = None, None
 
-        # 2. Si está en alert_domains → alertar sin VT
-        if self._domain_matches(domain, alert_domains):
-            logger.warning(f"[ALERTA] Dominio {domain} coincide con lista de alerta")
-            return True, domain, url
+        for url in urls:
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+            if ":" in domain:
+                domain = domain.split(":")[0]
+            last_domain, last_url = domain, url
 
-        logger.info(
-            f"[INFO] Dominio {domain} no está en listas locales, escaneando con VT..."
-        )
-        is_malicious = await self._scan_url_vt(session, vt_api_key)
+            logger.debug(f"[DEBUG] URL: {url} | Dominio extraído: {domain}")
 
-        if is_malicious is None:
-            logger.info("[INFO VT] Escaneo fallido o límite alcanzado, se asume seguro")
-            return False, domain, url
-        elif is_malicious:
-            logger.warning("[ALERTA VT] URL maliciosa detectada")
-            return True, domain, url
-        else:
-            logger.info("[INFO] URL segura según VT")
-            return False, domain, url
+            # 1. Si está en whitelist → omitir esta URL
+            if self._domain_matches(domain, whitelist_domains):
+                logger.info(f"[INFO] Dominio {domain} en whitelist -> omitido")
+                continue
+
+            # 2. Si está en alert_domains → alertar sin VT
+            if self._domain_matches(domain, alert_domains):
+                logger.warning(
+                    f"[ALERTA] Dominio {domain} coincide con lista de alerta"
+                )
+                return True, domain, url
+
+            pending_vt.append((domain, url))
+
+        # 3. URLs fuera de listas locales → VirusTotal (con tope por mensaje)
+        for domain, url in pending_vt[:_VT_MAX_URLS_PER_MESSAGE]:
+            logger.info(
+                f"[INFO] Dominio {domain} no está en listas locales, escaneando con VT..."
+            )
+            self.scanned_url = url
+            is_malicious = await self._scan_url_vt(session, vt_api_key)
+
+            if is_malicious is None:
+                logger.info(
+                    "[INFO VT] Escaneo fallido o límite alcanzado, se asume seguro"
+                )
+            elif is_malicious:
+                logger.warning("[ALERTA VT] URL maliciosa detectada")
+                return True, domain, url
+            else:
+                logger.info("[INFO] URL segura según VT")
+
+        return False, last_domain, last_url
 
     async def _scan_url_vt(self, session, api_key):
+        global _VT_COOLDOWN_UNTIL
         if not self.scanned_url:
             return False
+
+        # Sin API key, aiohttp lanzaria TypeError por header None y rompería
+        # todo el pipeline de on_message. Se trata como "escaneo no disponible".
+        if not api_key:
+            logger.debug("[VT] API key no configurada, se omite el escaneo.")
+            return None
+
+        if time.time() < _VT_COOLDOWN_UNTIL:
+            logger.debug("[VT] En cooldown por rate limit, se omite el escaneo.")
+            return None
 
         async with vt_semaphore:
             url_id = (
@@ -394,8 +436,12 @@ class Message:
                                 )
                                 return False
                     elif response.status == 429:
-                        logger.error("[ERROR VT] Límite alcanzado, esperando 60s...")
-                        await asyncio.sleep(60)
+                        # No dormir aquí: retendría el semáforo y bloquearía el
+                        # procesamiento de mensajes. Se marca cooldown global.
+                        logger.error(
+                            "[ERROR VT] Límite alcanzado, pausando escaneos 60s..."
+                        )
+                        _VT_COOLDOWN_UNTIL = time.time() + 60
                         return None
                     else:
                         logger.error(f"[ERROR VT] Error inesperado: {response.status}")
@@ -616,7 +662,12 @@ class Message:
                     _mc._MISCONDUCT_CACHE, key=lambda k: _mc._MISCONDUCT_CACHE[k]["ts"]
                 )
                 del _mc._MISCONDUCT_CACHE[oldest]
-            _mc._save_misconduct_cache(_mc._MISCONDUCT_CACHE)
+            # Persistir en un thread: escribir JSON a disco en el event loop
+            # bloquearía el procesamiento de mensajes. Se pasa una copia para
+            # evitar mutaciones durante la escritura.
+            await asyncio.to_thread(
+                _mc._save_misconduct_cache, dict(_mc._MISCONDUCT_CACHE)
+            )
             return result
 
         return False

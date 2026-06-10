@@ -58,8 +58,19 @@ class Paginator(discord.ui.View):
     ) -> None:
         if not await self._guard(interaction):
             return
-        await interaction.message.delete()
         self.stop()
+        is_ephemeral = bool(
+            interaction.message and interaction.message.flags.ephemeral
+        )
+        if is_ephemeral:
+            # Los mensajes efímeros no pueden borrarse vía message.delete():
+            # se desactiva la vista como cierre.
+            for child in self.children:
+                child.disabled = True  # type: ignore[union-attr]
+            await interaction.response.edit_message(view=self)
+        else:
+            await interaction.response.defer()
+            await interaction.message.delete()
 
     @discord.ui.button(emoji="▶", style=discord.ButtonStyle.secondary)
     async def btn_next(

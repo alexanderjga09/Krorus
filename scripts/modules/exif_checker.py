@@ -23,7 +23,10 @@ except ImportError:
 logger = logging.getLogger(__name__)
 
 IMAGE_EXTENSIONS = {"jpg", "jpeg", "tif", "tiff", "webp"}
-ARCHIVE_EXTENSIONS = {"zip", "rar", "7z", "tar", "gz", "bz2"}
+# Solo se incluyen formatos que check_archive_exif sabe procesar. Listar
+# formatos sin soporte (rar, 7z...) provocaba descargas de hasta 50MB que
+# siempre terminaban en un reporte vacío.
+ARCHIVE_EXTENSIONS = {"zip"}
 
 SENSITIVE_EXIF_FIELDS = {
     "GPSInfo": "Información GPS detectada",

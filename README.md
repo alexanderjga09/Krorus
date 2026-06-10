@@ -59,7 +59,7 @@ git clone https://github.com/alexanderjga09/Krorus.git
 
   - **Allowed Guild ID:** Aquí debes colocar la ID del servidor donde se establecerá el bot. Una vez configurado, el bot no admitirá la entrada ni permanecerá en ningún servidor que no coincida con esta ID.
 
-4. Cuando hayas llenado todos los campos, haz clic en **Configurar**. El programa instalará y preparará todo lo necesario para que, tras un breve momento, el bot comience a funcionar. 💞 Los cambios en los switches de funciones se guardan automáticamente sin necesidad de pulsar un botón adicional.
+4. Cuando hayas llenado todos los campos, haz clic en **Configurar**. El programa creará el entorno virtual, instalará las dependencias y **compilará las extensiones nativas de Rust** (`chainlog_rs` y `exif_rs`, por eso Rust es un requisito previo; este paso puede tardar unos minutos la primera vez). Tras un breve momento, el bot estará listo para funcionar. 💞 Los cambios en los switches de funciones se guardan automáticamente sin necesidad de pulsar un botón adicional.
 
 5. Con el bot funcionando en el servidor correcto, utiliza el comando **/set-data** para configurar el canal donde se enviarán las alertas y asignar el rol de **Protegido** (el rol que se le dará a los miembros menores de edad). ✅
 

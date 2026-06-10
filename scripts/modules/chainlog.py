@@ -2,7 +2,14 @@
 
 from pathlib import Path
 
-from chainlog_rs import ChainLog
+try:
+    from chainlog_rs import ChainLog
+except ImportError as e:
+    raise ImportError(
+        "No se encontró la extensión nativa 'chainlog_rs'. "
+        "Ejecuta 'Configurar' en la GUI (compila las extensiones de Rust) o "
+        "instálalas manualmente: pip install ./crates/chainlog_rs ./crates/exif_rs"
+    ) from e
 
 _LOGS_PATH = str(Path(__file__).resolve().parent.parent.parent / "data" / "logs.json")
 

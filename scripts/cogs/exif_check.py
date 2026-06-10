@@ -5,9 +5,12 @@ import discord
 from discord import default_permissions
 from discord.ext import commands
 
-from ..modules.exif_checker import check_archive_exif
+from ..modules.exif_checker import check_archive_exif_async
 
 logger = logging.getLogger(__name__)
+
+# Mismo límite que el chequeo automático de on_message
+_MAX_EXIF_FILE_SIZE = 50 * 1024 * 1024
 
 
 class ExifCheck(commands.Cog):
@@ -67,9 +70,19 @@ class ExifCheck(commands.Cog):
             if ext not in (".jpg", ".jpeg", ".tif", ".tiff", ".webp", ".zip"):
                 continue
 
+            if att.size > _MAX_EXIF_FILE_SIZE:
+                logger.warning(
+                    f"[EXIF CMD] Archivo demasiado grande: {att.filename} ({att.size} bytes)"
+                )
+                continue
+
             try:
                 file_data = await att.read()
-                report = check_archive_exif(file_data, att.filename, att.content_type)
+                # Versión async: el parseo EXIF/ZIP corre en un thread y no
+                # bloquea el event loop con archivos grandes.
+                report = await check_archive_exif_async(
+                    file_data, att.filename, att.content_type
+                )
                 if report.has_sensitive_data or report.files_checked > 0:
                     reports.append(report)
             except Exception as e:

@@ -118,6 +118,7 @@ DEFAULTS = {
     "monitor_voice_channels": True,
     "detailed_logging": False,
     "groq_timeout": 10.0,
+    "groq_audio_timeout": 30.0,
     "check_exif_metadata": True,
 }
 
@@ -158,6 +159,9 @@ class Krorus(commands.Bot):
         self._buffer_flush_delay: int = 60
         self.staff_channel_id: int = STAFF_CHANNEL_ID
         self.protected_role_id: int = PROTECTED_ROLE_ID
+        # Cooldown por canal de voz para no spamear la misma alerta de
+        # supervision en cada join/leave. channel_id -> timestamp ultima alerta
+        self._voice_alert_cooldown: dict[int, float] = {}
 
     def get_config(self, key: str, default=None):
         """Lee un valor de configuracion. Siempre refleja el estado actual."""
@@ -269,6 +273,16 @@ class Krorus(commands.Bot):
         try:
             # Ordenar cronológicamente por created_at
             sorted_msgs = sorted(messages, key=lambda m: m.created_at)
+
+            # Si el texto combinado (sin URLs) es demasiado corto, no merece
+            # una llamada a Groq. Esto permite acumular mensajes de 1-2 letras
+            # (insultos deletreados) sin gastar llamadas en un "ok" suelto.
+            combined_meaningful = "".join(
+                Message.meaningful_text(m.content) for m in sorted_msgs
+            )
+            if len(combined_meaningful) < 3:
+                return
+
             parts = []
             for msg in sorted_msgs:
                 ts = msg.created_at.strftime("%H:%M")
@@ -356,7 +370,11 @@ class Krorus(commands.Bot):
         whisper_cog = self.get_cog("Whisper")
         if old_wh != new_wh:
             if new_wh and whisper_cog is None:
-                self.add_cog(Whisper(self, BD))
+                # Usar los valores actuales (pueden haber cambiado via /set-data),
+                # no el BD global leido al importar el modulo.
+                self.add_cog(
+                    Whisper(self, (self.staff_channel_id, self.protected_role_id))
+                )
                 logger.info("[CONFIG] Cog 'Whisper' anadido.")
             elif not new_wh and whisper_cog is not None:
                 self.remove_cog("Whisper")
@@ -481,7 +499,7 @@ class Krorus(commands.Bot):
 
     async def _send_alert(self, message_or_text, code, title, details, file=None):
         staff_channel = self.get_channel(self.staff_channel_id)
-        if not isinstance(staff_channel, discord.TextChannel):
+        if not isinstance(staff_channel, (discord.TextChannel, discord.Thread)):
             logger.error("Canal de staff no valido")
             return
 
@@ -580,14 +598,14 @@ class Krorus(commands.Bot):
                 if results:
                     for code, alert, details, file in results:
                         await self._send_alert(message, code, alert, details, file)
-            # Buffer solo si hay un protegido involucrado y el texto es analizable
-            if (
-                results is not None
-                and message.content.strip()
-                and await msg._has_analyzable_text()
-            ):
-                await self._buffer_add(message, lookback=True)
-            return
+            if results is not None:
+                # Buffer solo si el texto es analizable
+                if message.content.strip() and await msg._has_analyzable_text():
+                    await self._buffer_add(message, lookback=True)
+                return
+            # Sin protegido involucrado en el reply → NO retornar: el mensaje
+            # puede mencionar a un protegido en el texto (seccion 2) o venir
+            # de un autor protegido (seccion 3).
 
         # 2. Menciones a usuarios protegidos
         if message.mentions:
@@ -654,19 +672,6 @@ class Krorus(commands.Bot):
         if ignore_cog and ignore_cog.should_ignore(message.content):
             return
 
-        if len(message.content) <= 2 and not (
-            message.attachments
-            and message.attachments[0].content_type
-            and (
-                message.attachments[0].content_type.startswith("audio/")
-                or message.attachments[0].content_type.startswith("image/")
-                or message.attachments[0].content_type.startswith("video/")
-                or message.attachments[0].content_type.startswith("file/")
-                or message.attachments[0].content_type.startswith("application/")
-            )
-        ):
-            return
-
         msg = Message(message)
 
         # Escaneo de enlaces
@@ -682,8 +687,11 @@ class Krorus(commands.Bot):
                 f"**Dominio:** {dominio}\n**URL:** {url}",
             )
 
-        # Sala de espera: acumular texto para análisis por lotes con Groq
-        if message.content.strip() and await msg._has_analyzable_text():
+        # Sala de espera: acumular texto para análisis por lotes con Groq.
+        # min_len=1: los mensajes muy cortos ("p", "u", "t", "o") también se
+        # acumulan para detectar insultos deletreados en varios mensajes; el
+        # buffer descarta al final los lotes sin contenido suficiente.
+        if message.content.strip() and await msg._has_analyzable_text(min_len=1):
             await self._buffer_add(message)
 
         # Manejo de archivos adjuntos
@@ -702,7 +710,7 @@ class Krorus(commands.Bot):
                         result = await msg.transcribe_audio(
                             GROQ_CLIENT,
                             message.author,
-                            timeout=self.get_config("groq_timeout", 30.0),
+                            timeout=self.get_config("groq_audio_timeout", 30.0),
                             attachment=att,
                         )
                         if result:
@@ -830,41 +838,42 @@ class Krorus(commands.Bot):
 
     # ── on_voice_state_update ─────────────────────────────────────────────
 
-    async def check_voice_channels(self, guild: discord.Guild, target_role_id: int):
-        protected_in_vc = [
-            m
-            for m in guild.members
-            if discord.utils.get(m.roles, id=target_role_id)
-            and m.voice
-            and m.voice.channel
-        ]
-        if not protected_in_vc:
+    VOICE_ALERT_COOLDOWN = 300  # segundos entre alertas repetidas por canal
+
+    async def check_voice_channel(self, channel, target_role_id: int):
+        """Alerta si en `channel` conviven protegidos y no-protegidos.
+
+        Aplica un cooldown por canal para no spamear al staff con la misma
+        situacion en cada join/leave. El cooldown se limpia cuando la
+        situacion se resuelve, para que una nueva ocurrencia alerte al instante.
+        """
+        if channel is None:
             return
 
-        checked = set()
-        for member in protected_in_vc:
-            vc = member.voice.channel
-            if vc.id in checked:
-                continue
-            checked.add(vc.id)
+        members = [m for m in channel.members if not m.bot]
+        protegidos = [
+            m for m in members if discord.utils.get(m.roles, id=target_role_id)
+        ]
+        others = [
+            m for m in members if not discord.utils.get(m.roles, id=target_role_id)
+        ]
 
-            others = [
-                m
-                for m in vc.members
-                if not discord.utils.get(m.roles, id=target_role_id)
-            ]
-            if others:
-                protegidos = [
-                    m
-                    for m in vc.members
-                    if discord.utils.get(m.roles, id=target_role_id)
-                ]
-                await self._send_alert(
-                    f"Se ha detectado una situacion de supervision en el canal **{vc.mention}**.",
-                    "",
-                    "⚠️ Alerta de supervision en canal de voz",
-                    f"**Protegidos:**\n{', '.join([m.mention for m in protegidos]) or 'Ninguno'}\n_ _\n**Miembros:**\n{', '.join([m.mention for m in others]) or 'Ninguno'}",
-                )
+        if not protegidos or not others:
+            self._voice_alert_cooldown.pop(channel.id, None)
+            return
+
+        now = time.time()
+        last = self._voice_alert_cooldown.get(channel.id, 0)
+        if now - last < self.VOICE_ALERT_COOLDOWN:
+            return
+        self._voice_alert_cooldown[channel.id] = now
+
+        await self._send_alert(
+            f"Se ha detectado una situacion de supervision en el canal **{channel.mention}**.",
+            "",
+            "⚠️ Alerta de supervision en canal de voz",
+            f"**Protegidos:**\n{', '.join(m.mention for m in protegidos)}\n_ _\n**Miembros:**\n{', '.join(m.mention for m in others)}",
+        )
 
     async def on_voice_state_update(
         self,
@@ -882,7 +891,9 @@ class Krorus(commands.Bot):
                 logger.info(f"{member.display_name} salio de {before.channel.name}")
 
             if self.get_config("monitor_voice_channels", True):
-                await self.check_voice_channels(member.guild, self.protected_role_id)
+                # Solo los canales afectados por el evento, no todo el guild
+                await self.check_voice_channel(after.channel, self.protected_role_id)
+                await self.check_voice_channel(before.channel, self.protected_role_id)
 
 
 def main() -> None:
