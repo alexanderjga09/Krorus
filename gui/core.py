@@ -217,10 +217,17 @@ class BotSetupCore:
     def _safe_update(self):
         def _do():
             with self._update_lock:
-                try:
-                    self.page.update()
-                except Exception:
-                    pass
+                # El diff de Flet (ObjectPatch._compare_lists) recorre
+                # self.console.controls por indice; si _flush_console muta esa
+                # lista (append / del por el limite de 1000) en otro hilo del
+                # thread-pool durante el render, salta "list index out of
+                # range". Tomar _console_lock aqui serializa la mutacion de la
+                # consola con el page.update() que la lee.
+                with self._console_lock:
+                    try:
+                        self.page.update()
+                    except Exception:
+                        pass
         try:
             self.page.run_thread(_do)
         except Exception:
@@ -352,8 +359,15 @@ class BotSetupCore:
                 batch += 1
             if len(self._log_records) > _MAX_CONSOLE_RECORDS:
                 excess = len(self._log_records) - _MAX_CONSOLE_RECORDS
+                removed = self._log_records[:excess]
                 del self._log_records[:excess]
-                del controls[:excess]
+                # `controls` solo contiene los registros que pasan el filtro
+                # actual, asi que de los mas viejos hay que quitar unicamente
+                # los que estaban visibles; usar `excess` aqui desincronizaba la
+                # vista con los registros cuando habia filtro o busqueda activos.
+                visible_removed = sum(1 for r in removed if self._passes_filter(r))
+                if visible_removed:
+                    del controls[:visible_removed]
             self._update_counter()
         self._safe_update()
 
