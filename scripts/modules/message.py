@@ -47,31 +47,120 @@ _VT_MAX_URLS_PER_MESSAGE = 5
 
 
 class GroqRateLimiter:
-    """Controla que no excedamos las llamadas/minuto a la API de Groq."""
+    """Sala de espera para las llamadas a la API de Groq.
 
-    def __init__(self, max_calls: int = 25, window: float = 60.0):
+    Aplica un límite de llamadas/minuto (ventana deslizante) y, cuando la API
+    se desborda, una sala de espera *acotada* con backpressure global:
+
+    - Un 429 de Groq activa un cooldown compartido (`note_rate_limit`): todas
+      las corrutinas en espera lo respetan en vez de martillear la API cada una
+      por su cuenta y dormir su propio `retry_after`.
+    - La sala de espera tiene aforo (`max_waiting`). Si está llena, las
+      peticiones nuevas se descartan en lugar de acumularse sin límite.
+    - Si una petición tendría que esperar más de `max_wait` s, se descarta: un
+      mensaje de hace casi un minuto ya no aporta nada moderarlo.
+    - No se retiene el lock mientras se duerme, así el estado puede leerse
+      (health check) y no se forma un convoy de corrutinas bloqueadas.
+
+    `acquire()` devuelve True si se concede el turno y False si se descarta.
+    """
+
+    def __init__(
+        self,
+        max_calls: int = 25,
+        window: float = 60.0,
+        max_waiting: int = 40,
+        max_wait: float = 45.0,
+    ):
         self.max_calls = max_calls
         self.window = window
+        self.max_waiting = max_waiting
+        self.max_wait = max_wait
         self._timestamps: list[float] = []
         self._lock = asyncio.Lock()
+        self._cooldown_until = 0.0
+        self._waiting = 0
+        self.dropped = 0
 
-    async def acquire(self):
+    def _waits(self, now: float) -> tuple[float, float]:
+        """Devuelve (espera_total, espera_rate_limit) en segundos.
+
+        - espera_total incluye el cooldown por 429 de Groq.
+        - espera_rate_limit es solo la cola de la ventana deslizante.
+
+        Debe llamarse con el lock tomado (muta `_timestamps`)."""
+        cutoff = now - self.window
+        self._timestamps = [t for t in self._timestamps if t > cutoff]
+        rate_wait = 0.0
+        if len(self._timestamps) >= self.max_calls:
+            rate_wait = self._timestamps[0] + self.window - now
+        cooldown = max(0.0, self._cooldown_until - now)
+        return max(rate_wait, cooldown), rate_wait
+
+    def note_rate_limit(self, retry_after: float) -> None:
+        """Registra un 429: activa/extiende el cooldown global compartido."""
+        until = time.time() + max(0.0, retry_after)
+        if until > self._cooldown_until:
+            self._cooldown_until = until
+            logger.warning(
+                f"[Groq RateLimit] Cooldown global activado {retry_after:.0f}s; "
+                f"la sala de espera retiene al resto de peticiones."
+            )
+
+    async def acquire(self) -> bool:
+        """Pide turno. True si se concede; False si la sala está saturada."""
         async with self._lock:
             now = time.time()
-            cutoff = now - self.window
-            self._timestamps = [t for t in self._timestamps if t > cutoff]
-            if len(self._timestamps) >= self.max_calls:
-                wait = self._timestamps[0] + self.window - now
-                if wait > 0:
-                    logger.info(
-                        f"[Groq RateLimit] Esperando {wait:.1f}s para respetar "
-                        f"límite de {self.max_calls} llamadas/{self.window}s"
-                    )
-                    await asyncio.sleep(wait)
+            total_wait, rate_wait = self._waits(now)
+            # Camino rápido: hay turno y nadie esperando por delante.
+            if total_wait <= 0 and self._waiting == 0:
+                self._timestamps.append(now)
+                return True
+            # Aforo lleno, o la cola de rate-limit es demasiado larga.
+            # El cooldown (429 de Groq) no cuenta para el descarte: si Groq
+            # pide una pausa las peticiones esperan en la sala en vez de ser
+            # rechazadas de golpe.
+            if self._waiting >= self.max_waiting or rate_wait > self.max_wait:
+                self.dropped += 1
+                logger.warning(
+                    f"[Groq RateLimit] Sala de espera saturada "
+                    f"(en espera={self._waiting}/{self.max_waiting}, "
+                    f"cola={rate_wait:.1f}s, cooldown={total_wait - rate_wait:.1f}s): "
+                    f"petición descartada."
+                )
+                return False
+            self._waiting += 1
+
+        try:
+            while True:
+                async with self._lock:
                     now = time.time()
-                    cutoff = now - self.window
-                    self._timestamps = [t for t in self._timestamps if t > cutoff]
-            self._timestamps.append(now)
+                    total_wait, rate_wait = self._waits(now)
+                    if total_wait <= 0:
+                        self._timestamps.append(now)
+                        return True
+                    # El plazo max_wait solo mira la cola de rate-limit, no el
+                    # cooldown de Groq.
+                    if rate_wait > self.max_wait:
+                        self.dropped += 1
+                        return False
+                await asyncio.sleep(min(total_wait, 2.0))
+        finally:
+            async with self._lock:
+                self._waiting -= 1
+
+    def snapshot(self) -> dict:
+        """Estado de la sala de espera para diagnóstico (health check)."""
+        now = time.time()
+        cutoff = now - self.window
+        return {
+            "in_window": sum(1 for t in self._timestamps if t > cutoff),
+            "max_calls": self.max_calls,
+            "waiting": self._waiting,
+            "max_waiting": self.max_waiting,
+            "cooldown": max(0.0, self._cooldown_until - now),
+            "dropped": self.dropped,
+        }
 
 
 groq_rate_limiter = GroqRateLimiter()
@@ -491,7 +580,13 @@ class Message:
             audio_buffer = io.BytesIO(audio_data)
             audio_buffer.name = audio_attachment.filename
 
-            await groq_rate_limiter.acquire()
+            if not await groq_rate_limiter.acquire():
+                # Sala de espera saturada: se omite silenciosamente (un audio
+                # sin transcribir no debe generar un embed de error).
+                logger.warning(
+                    "[Groq] Sala de espera saturada, se omite la transcripción."
+                )
+                return None
             transcription = await asyncio.wait_for(
                 GROQ_CLIENT.audio.transcriptions.create(
                     file=audio_buffer,
@@ -599,7 +694,11 @@ class Message:
                 """
 
             try:
-                await groq_rate_limiter.acquire()
+                if not await groq_rate_limiter.acquire():
+                    # Sala de espera saturada: se omite el análisis. Devolver
+                    # None (transitorio) evita cachear y permite reintentar en
+                    # el próximo mensaje cuando la API se descongestione.
+                    return None
                 chat_completion = await asyncio.wait_for(
                     groq_client.chat.completions.create(
                         messages=[
@@ -638,10 +737,13 @@ class Message:
                     retry_after = float(e.response.headers.get("retry-after", 60))
                 except Exception:
                     pass
+                # Backpressure global: en vez de que esta corrutina duerma sola
+                # (y las demás sigan martilleando), se activa un cooldown
+                # compartido que retiene a toda la sala de espera.
+                groq_rate_limiter.note_rate_limit(retry_after)
                 logger.warning(
-                    f"[Groq] 429 Too Many Requests. Esperando {retry_after:.0f}s..."
+                    f"[Groq] 429 Too Many Requests. Cooldown global {retry_after:.0f}s."
                 )
-                await asyncio.sleep(retry_after)
                 return None
             except groq.APIConnectionError as e:
                 logger.error(f"[Groq] Error de conexión con la API: {e}")

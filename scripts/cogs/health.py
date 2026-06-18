@@ -51,6 +51,20 @@ class HealthCheck(commands.Cog):
             inline=True,
         )
         embed.add_field(name="🚦 Rate Limit", value="🟢 Normal" if not rate_limited else "🔴 Rate Limited", inline=True)
+
+        # Estado de la sala de espera de la API de Groq.
+        from scripts.modules.message import groq_rate_limiter
+
+        snap = groq_rate_limiter.snapshot()
+        if snap["cooldown"] > 0:
+            groq_val = f"🔴 Cooldown {snap['cooldown']:.0f}s"
+        elif snap["waiting"] > 0:
+            groq_val = f"🟡 En espera: {snap['waiting']}/{snap['max_waiting']}"
+        else:
+            groq_val = f"🟢 {snap['in_window']}/{snap['max_calls']} por min"
+        if snap["dropped"]:
+            groq_val += f" · descartadas: {snap['dropped']}"
+        embed.add_field(name="🧠 Groq (sala de espera)", value=groq_val, inline=True)
         embed.add_field(
             name="👥 Usuarios", value=str(total_members), inline=True
         )

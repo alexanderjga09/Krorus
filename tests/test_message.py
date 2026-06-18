@@ -39,6 +39,35 @@ class TestGroqRateLimiter:
         limiter = GroqRateLimiter()
         assert limiter._timestamps == []
 
+    @pytest.mark.asyncio
+    async def test_acquire_returns_true_on_grant(self):
+        limiter = GroqRateLimiter(max_calls=5, window=60.0)
+        assert await limiter.acquire() is True
+
+    @pytest.mark.asyncio
+    async def test_note_rate_limit_activates_cooldown(self):
+        limiter = GroqRateLimiter()
+        limiter.note_rate_limit(30)
+        assert limiter.snapshot()["cooldown"] > 0
+
+    @pytest.mark.asyncio
+    async def test_acquire_dropped_when_wait_exceeds_max_wait(self):
+        # Cooldown global mayor que la espera máxima -> se descarta.
+        limiter = GroqRateLimiter(max_calls=5, window=60.0, max_wait=1.0)
+        limiter.note_rate_limit(60)
+        assert await limiter.acquire() is False
+        assert limiter.dropped == 1
+
+    @pytest.mark.asyncio
+    async def test_acquire_dropped_when_waiting_room_full(self):
+        limiter = GroqRateLimiter(
+            max_calls=1, window=60.0, max_waiting=0, max_wait=45.0
+        )
+        await limiter.acquire()  # consume el único turno de la ventana
+        # Aforo 0: la siguiente petición que tendría que esperar se descarta.
+        assert await limiter.acquire() is False
+        assert limiter.dropped == 1
+
 
 class TestMessageStaticMethods:
     def test_normalize_for_groq_removes_invisible(self):
