@@ -323,6 +323,8 @@ class Krorus(commands.Bot):
                     "❗ Mensaje inapropiado (múltiples mensajes)",
                     f"**Contenido acumulado:**\n{alert_text[:950]}",
                 )
+
+            await msg_obj._process_overflow(GROQ_CLIENT)
         except Exception as e:
             logger.exception(f"[BUFFER] Error procesando buffer: {e}")
 
@@ -835,6 +837,8 @@ class Krorus(commands.Bot):
                     "❗ Contenido inapropiado (edicion)",
                     f"**Contenido editado:**\n```{after.content[:950]}```",
                 )
+
+            await msg_obj._process_overflow(GROQ_CLIENT)
 
     # ── on_voice_state_update ─────────────────────────────────────────────
 

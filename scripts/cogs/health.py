@@ -62,8 +62,10 @@ class HealthCheck(commands.Cog):
             groq_val = f"🟡 En espera: {snap['waiting']}/{snap['max_waiting']}"
         else:
             groq_val = f"🟢 {snap['in_window']}/{snap['max_calls']} por min"
-        if snap["dropped"]:
-            groq_val += f" · descartadas: {snap['dropped']}"
+        if snap["overflow_saved"]:
+            groq_val += f" · overflow: {snap['overflow_saved']}"
+        if snap["overflow_pending"]:
+            groq_val += f" · pendientes: {snap['overflow_pending']}"
         embed.add_field(name="🧠 Groq (sala de espera)", value=groq_val, inline=True)
         embed.add_field(
             name="👥 Usuarios", value=str(total_members), inline=True
