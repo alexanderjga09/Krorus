@@ -24,6 +24,8 @@ env/
 data/logs.json
 data/misconduct_cache.json
 data/misconduct_cache_stats.json
+data/overflow_queue.json
+data/overflow_queue.json
 logs.json
 backups/
 
