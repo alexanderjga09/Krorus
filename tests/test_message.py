@@ -51,22 +51,29 @@ class TestGroqRateLimiter:
         assert limiter.snapshot()["cooldown"] > 0
 
     @pytest.mark.asyncio
-    async def test_acquire_dropped_when_wait_exceeds_max_wait(self):
-        # Cooldown global mayor que la espera máxima -> se descarta.
-        limiter = GroqRateLimiter(max_calls=5, window=60.0, max_wait=1.0)
-        limiter.note_rate_limit(60)
-        assert await limiter.acquire() is False
-        assert limiter.dropped == 1
+    async def test_acquire_waits_during_cooldown(self):
+        limiter = GroqRateLimiter(max_calls=5, window=60.0)
+        limiter.note_rate_limit(0.01)
+        assert await limiter.acquire() is True
 
     @pytest.mark.asyncio
-    async def test_acquire_dropped_when_waiting_room_full(self):
+    async def test_acquire_overflow_when_waiting_room_full(self):
         limiter = GroqRateLimiter(
-            max_calls=1, window=60.0, max_waiting=0, max_wait=45.0
+            max_calls=1, window=60.0, max_waiting=0
         )
-        await limiter.acquire()  # consume el único turno de la ventana
-        # Aforo 0: la siguiente petición que tendría que esperar se descarta.
+        await limiter.acquire()
         assert await limiter.acquire() is False
-        assert limiter.dropped == 1
+        assert limiter.overflow_saved == 1
+
+    @pytest.mark.asyncio
+    async def test_overflow_persistence(self):
+        limiter = GroqRateLimiter(max_calls=1, window=60.0, max_waiting=0)
+        await limiter.acquire()
+        await limiter.acquire()
+        limiter.save_overflow("test text")
+        items = limiter.pop_overflow()
+        assert len(items) == 1
+        assert items[0]["text"] == "test text"
 
 
 class TestMessageStaticMethods:

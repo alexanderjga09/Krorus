@@ -95,9 +95,8 @@ class GroqRateLimiter:
       las corrutinas en espera lo respetan en vez de martillear la API cada una
       por su cuenta y dormir su propio `retry_after`.
     - La sala de espera tiene aforo (`max_waiting`). Si está llena, las
-      peticiones nuevas se descartan en lugar de acumularse sin límite.
-    - Si una petición tendría que esperar más de `max_wait` s, se descarta: un
-      mensaje de hace casi un minuto ya no aporta nada moderarlo.
+      peticiones nuevas se guardan en `overflow_file` (JSON persistente) en
+      lugar de descartarse, y se procesan cuando haya turnos disponibles.
     - No se retiene el lock mientras se duerme, así el estado puede leerse
       (health check) y no se forma un convoy de corrutinas bloqueadas.
 
