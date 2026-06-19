@@ -809,17 +809,24 @@ class BotSetupActions:
                 and self.running_process.poll() is None
             )
             pid = self.running_process.pid if running and self.running_process else None
-        if running and pid and self._bot_start_time:
-            uptime_secs = int(time.time() - self._bot_start_time)
-            hours = uptime_secs // 3600
-            minutes = (uptime_secs % 3600) // 60
-            seconds = uptime_secs % 60
-            self.bot_uptime_text.value = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
-            self.bot_pid_text.value = str(pid)
-        else:
-            self.bot_uptime_text.value = "—"
-            self.bot_pid_text.value = "—"
-        self._safe_update()
+
+        def _do():
+            if running and pid and self._bot_start_time:
+                uptime_secs = int(time.time() - self._bot_start_time)
+                hours = uptime_secs // 3600
+                minutes = (uptime_secs % 3600) // 60
+                seconds = uptime_secs % 60
+                self.bot_uptime_text.value = f"{hours:02d}:{minutes:02d}:{seconds:02d}"
+                self.bot_pid_text.value = str(pid)
+            else:
+                self.bot_uptime_text.value = "—"
+                self.bot_pid_text.value = "—"
+            self._safe_update()
+
+        try:
+            self.page.run_thread(_do)
+        except Exception:
+            _do()
 
     def _save_logs(self, e):
         timestamp = time.strftime("%Y%m%d_%H%M%S")

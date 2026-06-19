@@ -186,15 +186,13 @@ class GroqRateLimiter:
     def _load_overflow(self) -> list[dict]:
         if self._overflow_path.exists():
             try:
-                return json.loads(self._overflow_path.read_text("utf-8"))
+                return js.loads(self._overflow_path.read_text("utf-8"))
             except Exception:
                 return []
         return []
 
     def _save_overflow(self, items: list[dict]) -> None:
-        self._overflow_path.write_text(
-            json.dumps(items, ensure_ascii=False, indent=2), "utf-8"
-        )
+        self._overflow_path.write_text(js.dumps(items, ensure_ascii=False, indent=2), "utf-8")
 
     def snapshot(self) -> dict:
         """Estado de la sala de espera para diagnóstico (health check)."""
@@ -271,9 +269,7 @@ class Message:
         )
         return "\n".join(lines) + extra
 
-    async def check_exif_sensible(
-        self, attachment: discord.Attachment
-    ) -> ArchiveExifReport | None:
+    async def check_exif_sensible(self, attachment: discord.Attachment) -> ArchiveExifReport | None:
         """
         Descarga un adjunto y revisa si contiene metadatos EXIF sensibles.
         Soporta imágenes directas y archivos ZIP que contengan imágenes.
@@ -479,25 +475,19 @@ class Message:
 
             # 2. Si está en alert_domains → alertar sin VT
             if self._domain_matches(domain, alert_domains):
-                logger.warning(
-                    f"[ALERTA] Dominio {domain} coincide con lista de alerta"
-                )
+                logger.warning(f"[ALERTA] Dominio {domain} coincide con lista de alerta")
                 return True, domain, url
 
             pending_vt.append((domain, url))
 
         # 3. URLs fuera de listas locales → VirusTotal (con tope por mensaje)
         for domain, url in pending_vt[:_VT_MAX_URLS_PER_MESSAGE]:
-            logger.info(
-                f"[INFO] Dominio {domain} no está en listas locales, escaneando con VT..."
-            )
+            logger.info(f"[INFO] Dominio {domain} no está en listas locales, escaneando con VT...")
             self.scanned_url = url
             is_malicious = await self._scan_url_vt(session, vt_api_key)
 
             if is_malicious is None:
-                logger.info(
-                    "[INFO VT] Escaneo fallido o límite alcanzado, se asume seguro"
-                )
+                logger.info("[INFO VT] Escaneo fallido o límite alcanzado, se asume seguro")
             elif is_malicious:
                 logger.warning("[ALERTA VT] URL maliciosa detectada")
                 return True, domain, url
@@ -522,9 +512,7 @@ class Message:
             return None
 
         async with vt_semaphore:
-            url_id = (
-                base64.urlsafe_b64encode(self.scanned_url.encode()).decode().strip("=")
-            )
+            url_id = base64.urlsafe_b64encode(self.scanned_url.encode()).decode().strip("=")
             headers = {"x-apikey": api_key}
             vt_api_url = f"https://www.virustotal.com/api/v3/urls/{url_id}"
 
@@ -551,9 +539,7 @@ class Message:
                         ) as post_resp:
                             if post_resp.status == 200:
                                 await asyncio.sleep(5)
-                                async with session.get(
-                                    vt_api_url, headers=headers
-                                ) as retry_resp:
+                                async with session.get(vt_api_url, headers=headers) as retry_resp:
                                     if retry_resp.status == 200:
                                         data = await retry_resp.json()
                                         stats = (
@@ -569,16 +555,12 @@ class Message:
                                         )
                                         return False
                             else:
-                                logger.error(
-                                    f"[ERROR VT] Fallo al enviar URL: {post_resp.status}"
-                                )
+                                logger.error(f"[ERROR VT] Fallo al enviar URL: {post_resp.status}")
                                 return False
                     elif response.status == 429:
                         # No dormir aquí: retendría el semáforo y bloquearía el
                         # procesamiento de mensajes. Se marca cooldown global.
-                        logger.error(
-                            "[ERROR VT] Límite alcanzado, pausando escaneos 60s..."
-                        )
+                        logger.error("[ERROR VT] Límite alcanzado, pausando escaneos 60s...")
                         _VT_COOLDOWN_UNTIL = time.time() + 60
                         return None
                     else:
@@ -610,13 +592,10 @@ class Message:
         )
 
         # Aceptamos cualquier tipo que empiece por "audio/"
-        if (
-            not audio_attachment.content_type
-            or not audio_attachment.content_type.startswith("audio/")
+        if not audio_attachment.content_type or not audio_attachment.content_type.startswith(
+            "audio/"
         ):
-            logger.debug(
-                f"[DEBUG] Formato de audio no soportado: {audio_attachment.content_type}"
-            )
+            logger.debug(f"[DEBUG] Formato de audio no soportado: {audio_attachment.content_type}")
             return (
                 "",
                 "❌ Formato no soportado",
@@ -630,12 +609,8 @@ class Message:
             audio_buffer.name = audio_attachment.filename
 
             if not await groq_rate_limiter.acquire():
-                logger.warning(
-                    "[Groq] Sala de espera llena, transcripción encolada para después."
-                )
-                groq_rate_limiter.save_overflow(
-                    f"[whisper] {audio_attachment.filename}"
-                )
+                logger.warning("[Groq] Sala de espera llena, transcripción encolada para después.")
+                groq_rate_limiter.save_overflow(f"[whisper] {audio_attachment.filename}")
                 return None
             transcription = await asyncio.wait_for(
                 GROQ_CLIENT.audio.transcriptions.create(
@@ -647,9 +622,7 @@ class Message:
             )
 
             # Creamos el objeto discord.File para el retorno
-            audio_file = discord.File(
-                io.BytesIO(audio_data), filename=audio_attachment.filename
-            )
+            audio_file = discord.File(io.BytesIO(audio_data), filename=audio_attachment.filename)
 
             reference = (
                 f"Mandado a: {member.mention}"
@@ -697,9 +670,7 @@ class Message:
         now = time.time()
         if cached is not None and now - cached["ts"] < _mc._MISCONDUCT_CACHE_TTL:
             _mc.record_cache_hit()
-            logger.debug(
-                f"[Groq] Cache hit: {text_to_analyze[:60]}... -> {cached['result']}"
-            )
+            logger.debug(f"[Groq] Cache hit: {text_to_analyze[:60]}... -> {cached['result']}")
             return cached["result"]
         _mc.record_cache_miss()
 
@@ -708,13 +679,9 @@ class Message:
         if result is not None:
             _mc._MISCONDUCT_CACHE[cache_key] = {"result": result, "ts": time.time()}
             if len(_mc._MISCONDUCT_CACHE) > _mc._MISCONDUCT_CACHE_MAX:
-                oldest = min(
-                    _mc._MISCONDUCT_CACHE, key=lambda k: _mc._MISCONDUCT_CACHE[k]["ts"]
-                )
+                oldest = min(_mc._MISCONDUCT_CACHE, key=lambda k: _mc._MISCONDUCT_CACHE[k]["ts"])
                 del _mc._MISCONDUCT_CACHE[oldest]
-            await asyncio.to_thread(
-                _mc._save_misconduct_cache, dict(_mc._MISCONDUCT_CACHE)
-            )
+            await asyncio.to_thread(_mc._save_misconduct_cache, dict(_mc._MISCONDUCT_CACHE))
             return result
 
         return False
@@ -728,9 +695,7 @@ class Message:
         desbordamiento para procesarlo después."""
         if not await groq_rate_limiter.acquire():
             groq_rate_limiter.save_overflow(text)
-            logger.warning(
-                f"[Groq] Sala llena, texto encolado para después: {text[:60]}..."
-            )
+            logger.warning(f"[Groq] Sala llena, texto encolado para después: {text[:60]}...")
             return None
 
         try:
@@ -771,9 +736,7 @@ class Message:
             except Exception:
                 pass
             groq_rate_limiter.note_rate_limit(retry_after)
-            logger.warning(
-                f"[Groq] 429 Too Many Requests. Cooldown global {retry_after:.0f}s."
-            )
+            logger.warning(f"[Groq] 429 Too Many Requests. Cooldown global {retry_after:.0f}s.")
             return None
         except groq.APIConnectionError as e:
             logger.error(f"[Groq] Error de conexión con la API: {e}")
@@ -805,16 +768,12 @@ class Message:
                     )
             await asyncio.sleep(0)
 
-    async def _ref_message(
-        self, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True
-    ):
+    async def _ref_message(self, role_id, GROQ_CLIENT, vt_api_key, session, do_misconduct=True):
         logger.debug(
             f"[REF] _ref_message llamado para msg {self.msg.id} con referencia a {self.msg.reference.message_id if self.msg.reference else 'None'}"
         )
         try:
-            ref_message = await self.msg.channel.fetch_message(
-                self.msg.reference.message_id
-            )
+            ref_message = await self.msg.channel.fetch_message(self.msg.reference.message_id)
         except discord.NotFound:
             logger.debug("[REF] Mensaje referenciado no encontrado")
             return
@@ -874,8 +833,7 @@ class Message:
             media_atts = [
                 a
                 for a in self.msg.attachments
-                if a.content_type
-                and a.content_type.startswith(("image/", "video/", "file/"))
+                if a.content_type and a.content_type.startswith(("image/", "video/", "file/"))
             ]
             if media_atts:
                 logger.debug(f"[DEBUG _ref] {len(media_atts)} adjunto(s) multimedia")
@@ -896,9 +854,7 @@ class Message:
                 )
 
                 for report in exif_findings:
-                    risk_level = (
-                        "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
-                    )
+                    risk_level = "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
                     results.append(
                         (
                             "",
@@ -1006,13 +962,10 @@ class Message:
             media_atts = [
                 a
                 for a in self.msg.attachments
-                if a.content_type
-                and a.content_type.startswith(("image/", "video/", "file/"))
+                if a.content_type and a.content_type.startswith(("image/", "video/", "file/"))
             ]
             if media_atts:
-                logger.info(
-                    f"[MENTION] {len(media_atts)} adjunto(s) multimedia hacia protegidos"
-                )
+                logger.info(f"[MENTION] {len(media_atts)} adjunto(s) multimedia hacia protegidos")
 
                 exif_findings = []
                 for a in media_atts:
@@ -1031,9 +984,7 @@ class Message:
                 )
 
                 for report in exif_findings:
-                    risk_level = (
-                        "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
-                    )
+                    risk_level = "🚨 ALTO RIESGO" if report.has_high_risk else "⚠️ Riesgo"
                     results.append(
                         (
                             "",
