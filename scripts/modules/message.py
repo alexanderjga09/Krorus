@@ -175,11 +175,11 @@ class GroqRateLimiter:
             async with self._lock:
                 self._waiting -= 1
 
-    async def save_overflow(self, text: str) -> None:
+    async def save_overflow(self, text: str, author: str | None = None) -> None:
         """Guarda un texto en la cola de desbordamiento (archivo JSON)."""
         async with self._io_lock:
             items = await self._load_overflow_io()
-            items.append({"text": text, "ts": time.time()})
+            items.append({"text": text, "ts": time.time(), "author": author or "Desconocido"})
             await self._save_overflow_io(items)
 
     async def pop_overflow(self) -> list[dict]:
@@ -629,7 +629,10 @@ class Message:
 
             if not await groq_rate_limiter.acquire():
                 logger.warning("[Groq] Sala de espera llena, transcripción encolada para después.")
-                await groq_rate_limiter.save_overflow(f"[whisper] {audio_attachment.filename}")
+                await groq_rate_limiter.save_overflow(
+                    f"[whisper] {audio_attachment.filename}",
+                    author=member.display_name if member else None,
+                )
                 return None
             transcription = await asyncio.wait_for(
                 GROQ_CLIENT.audio.transcriptions.create(
@@ -693,7 +696,8 @@ class Message:
             return cached["result"]
         _mc.record_cache_miss()
 
-        result = await self._analyze_with_groq(groq_client, text_to_analyze, timeout)
+        author = getattr(self.msg.author, "display_name", str(self.msg.author)) if self.msg.author else None
+        result = await self._analyze_with_groq(groq_client, text_to_analyze, timeout, author=author)
 
         if result is not None:
             _mc._MISCONDUCT_CACHE[cache_key] = {"result": result, "ts": time.time()}
@@ -706,14 +710,15 @@ class Message:
         return False
 
     async def _analyze_with_groq(
-        self, groq_client, text: str, timeout: float = 10.0
+        self, groq_client, text: str, timeout: float = 10.0,
+        author: str | None = None,
     ) -> bool | None:
         """Llama a Groq. True/False en éxito, None en error transitorio.
 
         Si la sala de espera está llena guarda el texto en la cola de
         desbordamiento para procesarlo después."""
         if not await groq_rate_limiter.acquire():
-            await groq_rate_limiter.save_overflow(text)
+            await groq_rate_limiter.save_overflow(text, author=author)
             logger.warning(f"[Groq] Sala llena, texto encolado para después: {text[:60]}...")
             return None
 

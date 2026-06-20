@@ -646,6 +646,28 @@ class BotSetupActions:
 
         threading.Thread(target=update, daemon=True).start()
 
+    def _refresh_groq_status(self, e=None):
+        try:
+            from scripts.modules.message import groq_rate_limiter
+
+            snap = groq_rate_limiter.snapshot()
+            cd = snap["cooldown"]
+            if cd > 0:
+                self.groq_cooldown_text.value = f"🔴 {cd:.0f}s"
+            else:
+                self.groq_cooldown_text.value = "🟢 0s"
+            self.groq_waiting_text.value = f"{snap['waiting']}/{snap['max_waiting'] + snap.get('overflow_reserve', 0)}"
+            over = snap["overflow_pending"]
+            if over:
+                self.groq_overflow_text.value = f"📦 {over} pend."
+            else:
+                self.groq_overflow_text.value = "0"
+        except Exception:
+            self.groq_cooldown_text.value = "N/A"
+            self.groq_waiting_text.value = "N/A"
+            self.groq_overflow_text.value = "N/A"
+        self._safe_update()
+
     def _refresh_cache_stats(self, e=None):
         try:
             from scripts.modules.misconduct_cache import get_misconduct_cache_stats
@@ -663,7 +685,7 @@ class BotSetupActions:
             self.clear_cache_btn.disabled = False
         except Exception as ex:
             self.log(f"Error al obtener stats de cache: {ex}", ft.Colors.RED_400)
-        self._safe_update()
+        self._refresh_groq_status()
 
     def _clear_cache(self, e):
         try:

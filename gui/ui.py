@@ -179,6 +179,24 @@ class BotSetupUI:
                     ]
                 ),
                 ft.Row([self.refresh_cache_btn, self.clear_cache_btn]),
+                ft.Divider(height=4),
+                ft.Text("Estado de Groq", size=14, weight=ft.FontWeight.W_600),
+                ft.Row(
+                    [
+                        ft.Column([
+                            ft.Text("Cooldown:", size=12, color=ft.Colors.GREY),
+                            self.groq_cooldown_text,
+                        ]),
+                        ft.Column([
+                            ft.Text("Sala espera:", size=12, color=ft.Colors.GREY),
+                            self.groq_waiting_text,
+                        ]),
+                        ft.Column([
+                            ft.Text("Overflow:", size=12, color=ft.Colors.GREY),
+                            self.groq_overflow_text,
+                        ]),
+                    ]
+                ),
             ],
             expand=True,
             spacing=4,

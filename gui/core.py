@@ -182,6 +182,10 @@ class BotSetupCore:
         self.refresh_cache_btn = ft.Button("Refrescar", icon=ft.Icons.REFRESH, on_click=self._refresh_cache_stats)
         self.clear_cache_btn = ft.Button("Limpiar", icon=ft.Icons.DELETE, on_click=self._clear_cache, disabled=True)
 
+        self.groq_cooldown_text = ft.Text("—", size=13)
+        self.groq_waiting_text = ft.Text("—", size=13)
+        self.groq_overflow_text = ft.Text("—", size=13)
+
         self.theme_switch = ft.Switch(label="Modo claro", value=False, on_change=self._toggle_theme)
 
         self.bot_uptime_text = ft.Text("—", size=13)
