@@ -762,12 +762,18 @@ class Message:
                     f"[Overflow] Transcripción de audio caducada, "
                     f"ya no se puede procesar: {text[len('[whisper] '):]}"
                 )
+                groq_rate_limiter.overflow_saved = max(
+                    0, groq_rate_limiter.overflow_saved - 1
+                )
                 continue
             if not await groq_rate_limiter.acquire(overflow=True):
                 groq_rate_limiter.save_overflow(text)
                 for remaining in items[1:]:
                     groq_rate_limiter.save_overflow(remaining["text"])
                 break
+            groq_rate_limiter.overflow_saved = max(
+                0, groq_rate_limiter.overflow_saved - 1
+            )
             result = await self._analyze_with_groq(groq_client, text, timeout)
             if result is not None:
                 cache_key = hashlib.sha256(text.encode()).hexdigest()
