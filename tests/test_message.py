@@ -1,3 +1,5 @@
+import tempfile
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import discord
@@ -67,11 +69,14 @@ class TestGroqRateLimiter:
 
     @pytest.mark.asyncio
     async def test_overflow_persistence(self):
-        limiter = GroqRateLimiter(max_calls=1, window=60.0, max_waiting=0)
+        limiter = GroqRateLimiter(
+            max_calls=1, window=60.0, max_waiting=0,
+            overflow_file=Path(tempfile.gettempdir(), "test_overflow.json").as_posix(),
+        )
         await limiter.acquire()
         await limiter.acquire()
-        limiter.save_overflow("test text")
-        items = limiter.pop_overflow()
+        await limiter.save_overflow("test text")
+        items = await limiter.pop_overflow()
         assert len(items) == 1
         assert items[0]["text"] == "test text"
 

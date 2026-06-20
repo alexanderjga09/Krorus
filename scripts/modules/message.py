@@ -117,6 +117,7 @@ class GroqRateLimiter:
         self.overflow_reserve = overflow_reserve
         self._timestamps: list[float] = []
         self._lock = asyncio.Lock()
+        self._io_lock = asyncio.Lock()
         self._cooldown_until = 0.0
         self._waiting = 0
         self.overflow_saved = 0
@@ -174,28 +175,42 @@ class GroqRateLimiter:
             async with self._lock:
                 self._waiting -= 1
 
-    def save_overflow(self, text: str) -> None:
+    async def save_overflow(self, text: str) -> None:
         """Guarda un texto en la cola de desbordamiento (archivo JSON)."""
-        items = self._load_overflow()
-        items.append({"text": text, "ts": time.time()})
-        self._save_overflow(items)
+        async with self._io_lock:
+            items = await self._load_overflow_io()
+            items.append({"text": text, "ts": time.time()})
+            await self._save_overflow_io(items)
 
-    def pop_overflow(self) -> list[dict]:
+    async def pop_overflow(self) -> list[dict]:
         """Saca y borra todos los elementos encolados."""
-        items = self._load_overflow()
-        self._save_overflow([])
-        return items
+        async with self._io_lock:
+            items = await self._load_overflow_io()
+            await self._save_overflow_io([])
+            return items
+
+    async def _load_overflow_io(self) -> list[dict]:
+        if self._overflow_path.exists():
+            try:
+                raw = await asyncio.to_thread(self._overflow_path.read_text, "utf-8")
+                return js.loads(raw)
+            except Exception:
+                return []
+        return []
+
+    async def _save_overflow_io(self, items: list[dict]) -> None:
+        raw = js.dumps(items, ensure_ascii=False, indent=2)
+        await asyncio.to_thread(self._overflow_path.write_text, raw, "utf-8")
 
     def _load_overflow(self) -> list[dict]:
+        """Versión sincrónica para snapshot() (no bloquea el loop porque es llamada
+        desde comandos poco frecuentes)."""
         if self._overflow_path.exists():
             try:
                 return js.loads(self._overflow_path.read_text("utf-8"))
             except Exception:
                 return []
         return []
-
-    def _save_overflow(self, items: list[dict]) -> None:
-        self._overflow_path.write_text(js.dumps(items, ensure_ascii=False, indent=2), "utf-8")
 
     def snapshot(self) -> dict:
         """Estado de la sala de espera para diagnóstico (health check)."""
@@ -614,7 +629,7 @@ class Message:
 
             if not await groq_rate_limiter.acquire():
                 logger.warning("[Groq] Sala de espera llena, transcripción encolada para después.")
-                groq_rate_limiter.save_overflow(f"[whisper] {audio_attachment.filename}")
+                await groq_rate_limiter.save_overflow(f"[whisper] {audio_attachment.filename}")
                 return None
             transcription = await asyncio.wait_for(
                 GROQ_CLIENT.audio.transcriptions.create(
@@ -698,7 +713,7 @@ class Message:
         Si la sala de espera está llena guarda el texto en la cola de
         desbordamiento para procesarlo después."""
         if not await groq_rate_limiter.acquire():
-            groq_rate_limiter.save_overflow(text)
+            await groq_rate_limiter.save_overflow(text)
             logger.warning(f"[Groq] Sala llena, texto encolado para después: {text[:60]}...")
             return None
 
@@ -754,7 +769,7 @@ class Message:
 
     async def _process_overflow(self, groq_client, timeout: float = 10.0) -> None:
         """Procesa la cola de desbordamiento mientras haya turnos disponibles."""
-        items = groq_rate_limiter.pop_overflow()
+        items = await groq_rate_limiter.pop_overflow()
         for item in items:
             text = item["text"]
             if text.startswith("[whisper]"):
@@ -767,9 +782,9 @@ class Message:
                 )
                 continue
             if not await groq_rate_limiter.acquire(overflow=True):
-                groq_rate_limiter.save_overflow(text)
+                await groq_rate_limiter.save_overflow(text)
                 for remaining in items[1:]:
-                    groq_rate_limiter.save_overflow(remaining["text"])
+                    await groq_rate_limiter.save_overflow(remaining["text"])
                 break
             groq_rate_limiter.overflow_saved = max(
                 0, groq_rate_limiter.overflow_saved - 1
