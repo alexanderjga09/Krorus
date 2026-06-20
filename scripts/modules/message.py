@@ -757,6 +757,12 @@ class Message:
         items = groq_rate_limiter.pop_overflow()
         for item in items:
             text = item["text"]
+            if text.startswith("[whisper]"):
+                logger.warning(
+                    f"[Overflow] Transcripción de audio caducada, "
+                    f"ya no se puede procesar: {text[len('[whisper] '):]}"
+                )
+                continue
             if not await groq_rate_limiter.acquire(overflow=True):
                 groq_rate_limiter.save_overflow(text)
                 for remaining in items[1:]:
