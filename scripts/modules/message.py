@@ -108,11 +108,13 @@ class GroqRateLimiter:
         max_calls: int = 25,
         window: float = 60.0,
         max_waiting: int = 40,
+        overflow_reserve: int = 5,
         overflow_file: str = "data/overflow_queue.json",
     ):
         self.max_calls = max_calls
         self.window = window
         self.max_waiting = max_waiting
+        self.overflow_reserve = overflow_reserve
         self._timestamps: list[float] = []
         self._lock = asyncio.Lock()
         self._cooldown_until = 0.0
@@ -141,18 +143,20 @@ class GroqRateLimiter:
                 f"la sala de espera retiene al resto de peticiones."
             )
 
-    async def acquire(self) -> bool:
+    async def acquire(self, overflow: bool = False) -> bool:
         """Pide turno. True si se concede; False si la sala está llena.
 
         Si la sala está llena (>= max_waiting concurrentes) la petición NO
-        se descarta: se guarda en `overflow_file` para procesarse después."""
+        se descarta: se guarda en `overflow_file` para procesarse después.
+        overflow=True permite usar los `overflow_reserve` slots extra."""
         async with self._lock:
             now = time.time()
             wait = self._waits(now)
+            effective_max = self.max_waiting + (self.overflow_reserve if overflow else 0)
             if wait <= 0 and self._waiting == 0:
                 self._timestamps.append(now)
                 return True
-            if self._waiting >= self.max_waiting:
+            if self._waiting >= effective_max:
                 self.overflow_saved += 1
                 return False
             self._waiting += 1
@@ -203,6 +207,7 @@ class GroqRateLimiter:
             "max_calls": self.max_calls,
             "waiting": self._waiting,
             "max_waiting": self.max_waiting,
+            "overflow_reserve": self.overflow_reserve,
             "cooldown": max(0.0, self._cooldown_until - now),
             "overflow_saved": self.overflow_saved,
             "overflow_pending": overflow_items,
@@ -752,7 +757,7 @@ class Message:
         items = groq_rate_limiter.pop_overflow()
         for item in items:
             text = item["text"]
-            if not await groq_rate_limiter.acquire():
+            if not await groq_rate_limiter.acquire(overflow=True):
                 groq_rate_limiter.save_overflow(text)
                 for remaining in items[1:]:
                     groq_rate_limiter.save_overflow(remaining["text"])
