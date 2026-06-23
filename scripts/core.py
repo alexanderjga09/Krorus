@@ -162,6 +162,9 @@ class Krorus(commands.Bot):
         # Cooldown por canal de voz para no spamear la misma alerta de
         # supervision en cada join/leave. channel_id -> timestamp ultima alerta
         self._voice_alert_cooldown: dict[int, float] = {}
+        # IDs de mensajes que ya dispararon alerta (+ timestamp). Se filtran
+        # del lookback para evitar doble/triple penalización por el mismo texto.
+        self._flagged_msg_ids: dict[int, float] = {}
 
     def get_config(self, key: str, default=None):
         """Lee un valor de configuracion. Siempre refleja el estado actual."""
@@ -205,12 +208,25 @@ class Krorus(commands.Bot):
 
     # ── Sistema de buffer/sala de espera para Groq ────────────────────────
 
+    def _is_flagged(self, msg_id: int) -> bool:
+        """True si el mensaje ya fue penalizado y su flag no ha expirado."""
+        expiry = self._flagged_msg_ids.get(msg_id)
+        if expiry is None:
+            return False
+        if time.time() > expiry:
+            del self._flagged_msg_ids[msg_id]
+            return False
+        return True
+
     async def _buffer_add(self, message: discord.Message, lookback: bool = False):
         """Buffer de mensajes: acumula texto de usuarios protegidos hasta
         que otro usuario hable en el canal o pasen 60s sin actividad.
         Si lookback=True, busca mensajes recientes del mismo autor (≤60s)
         que no fueron capturados (ej: anteriores a una mención) y los incluye."""
         channel_id = message.channel.id
+
+        if self._is_flagged(message.id):
+            return
 
         recent_msgs: list[discord.Message] = []
         if lookback:
@@ -219,7 +235,11 @@ class Krorus(commands.Bot):
                 async for msg in message.channel.history(
                     before=message, after=cutoff, limit=15
                 ):
-                    if msg.author.id == message.author.id and not msg.author.bot:
+                    if (
+                        msg.author.id == message.author.id
+                        and not msg.author.bot
+                        and not self._is_flagged(msg.id)
+                    ):
                         recent_msgs.append(msg)
                 recent_msgs.reverse()
             except Exception:
@@ -298,6 +318,10 @@ class Krorus(commands.Bot):
             )
             if misconduct:
                 code = generate_code()
+                now = time.time()
+                flag_expiry = now + 120.0
+                for m in sorted_msgs:
+                    self._flagged_msg_ids[m.id] = flag_expiry
                 # Chain log si algún autor no es protegido
                 for m in sorted_msgs:
                     member = m.guild.get_member(m.author.id)
@@ -827,6 +851,7 @@ class Krorus(commands.Bot):
             )
             if misconduct:
                 code = generate_code()
+                self._flagged_msg_ids[after.id] = time.time() + 120.0
                 chain_log = get_chain_log()
                 chain_log.add_alert(
                     str(after.author.id), code, "Msg INA. [edited]", after.jump_url
