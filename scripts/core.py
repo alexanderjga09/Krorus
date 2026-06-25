@@ -752,21 +752,40 @@ class Krorus(commands.Bot):
         if not discord.utils.get(member.roles, id=self.protected_role_id):
             # No es protegido, pero si tiene un buffer activo (por mención/reply
             # reciente a un protegido), sus mensajes posteriores también se acumulan
-            # y se les escanean los enlaces.
-            if (
-                self._buffer_has_active(message.channel.id, message.author.id)
-                and message.content.strip()
-            ):
+            # y se escanean enlaces, multimedia y audio.
+            if self._buffer_has_active(message.channel.id, message.author.id):
                 msg = Message(message)
                 async with self._get_session() as session:
                     vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
-                    alert_url, dominio, url = await msg.CheckAndAlert(vt_api_key, session)
-                if alert_url:
-                    await self._send_alert(
-                        message, "", "⚠️ Enlace sensible",
-                        f"**Dominio:** {dominio}\n**URL:** {url}",
-                    )
-                if await msg._has_analyzable_text():
+                    if message.content.strip():
+                        alert_url, dominio, url = await msg.CheckAndAlert(vt_api_key, session)
+                        if alert_url:
+                            await self._send_alert(
+                                message, "", "⚠️ Enlace sensible",
+                                f"**Dominio:** {dominio}\n**URL:** {url}",
+                            )
+                    media_atts = [
+                        a for a in message.attachments
+                        if a.content_type and a.content_type.startswith(("image/", "video/", "file/"))
+                    ]
+                    if media_atts:
+                        files = [await a.to_file() for a in media_atts[:10]]
+                        await self._send_alert(
+                            message, "", f"📁 {len(media_atts)} archivo(s)",
+                            Message._describe_attachments(media_atts),
+                            file=files,
+                        )
+                    for a in message.attachments:
+                        if a.content_type and a.content_type.startswith("audio/"):
+                            result = await msg.transcribe_audio(
+                                GROQ_CLIENT, member=member, attachment=a
+                            )
+                            if result:
+                                _, title, details, audio_file = result
+                                await self._send_alert(
+                                    message, "", title, details, file=audio_file,
+                                )
+                if message.content.strip() and await msg._has_analyzable_text():
                     await self._buffer_add(message)
             return
 
