@@ -165,6 +165,8 @@ class Krorus(commands.Bot):
         # IDs de mensajes que ya dispararon alerta (+ timestamp). Se filtran
         # del lookback para evitar doble/triple penalización por el mismo texto.
         self._flagged_msg_ids: dict[int, float] = {}
+        # IDs de mensajes que pasaron por el buffer (activo o ya procesado).
+        self._buffered_msg_ids: dict[int, float] = {}
 
     def get_config(self, key: str, default=None):
         """Lee un valor de configuracion. Siempre refleja el estado actual."""
@@ -218,6 +220,16 @@ class Krorus(commands.Bot):
             return False
         return True
 
+    def _was_in_buffer(self, msg_id: int) -> bool:
+        """True si el mensaje estuvo (o está) en un buffer reciente."""
+        expiry = self._buffered_msg_ids.get(msg_id)
+        if expiry is None:
+            return False
+        if time.time() > expiry:
+            del self._buffered_msg_ids[msg_id]
+            return False
+        return True
+
     async def _buffer_add(self, message: discord.Message, lookback: bool = False):
         """Buffer de mensajes: acumula texto de usuarios protegidos hasta
         que otro usuario hable en el canal o pasen 60s sin actividad.
@@ -229,6 +241,8 @@ class Krorus(commands.Bot):
             return
 
         recent_msgs: list[discord.Message] = []
+        now = time.time()
+        buf_expiry = now + 300.0
         if lookback:
             try:
                 cutoff = message.created_at - datetime.timedelta(seconds=60)
@@ -240,11 +254,13 @@ class Krorus(commands.Bot):
                         and not msg.author.bot
                         and not self._is_flagged(msg.id)
                     ):
+                        self._buffered_msg_ids[msg.id] = buf_expiry
                         recent_msgs.append(msg)
                 recent_msgs.reverse()
             except Exception:
                 pass
 
+        self._buffered_msg_ids[message.id] = buf_expiry
         async with self._buffer_lock:
             if channel_id in self._msg_buffer:
                 info = self._msg_buffer[channel_id]
