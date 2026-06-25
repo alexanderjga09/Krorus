@@ -859,6 +859,12 @@ class Krorus(commands.Bot):
             f"**Antes:**\n```{before.content[:950]}```\n**Después:**\n```{after.content[:950]}```",
         )
 
+        if self._was_in_buffer(after.id):
+            logger.info(
+                f"[EDIT] El mensaje {after.id} estuvo en el buffer — "
+                f"edición puede extender contexto previo."
+            )
+
         if not author_is_protected and after.content.strip():
             msg_obj = Message(after)
             misconduct = await msg_obj.Misconduct(
