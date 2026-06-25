@@ -702,11 +702,20 @@ class Krorus(commands.Bot):
         if not discord.utils.get(member.roles, id=self.protected_role_id):
             # No es protegido, pero si tiene un buffer activo (por mención/reply
             # reciente a un protegido), sus mensajes posteriores también se acumulan
+            # y se les escanean los enlaces.
             if (
                 self._buffer_has_active(message.channel.id, message.author.id)
                 and message.content.strip()
             ):
                 msg = Message(message)
+                async with self._get_session() as session:
+                    vt_api_key = os.getenv("VIRUSTOTAL_API_KEY")
+                    alert_url, dominio, url = await msg.CheckAndAlert(vt_api_key, session)
+                if alert_url:
+                    await self._send_alert(
+                        message, "", "⚠️ Enlace sensible",
+                        f"**Dominio:** {dominio}\n**URL:** {url}",
+                    )
                 if await msg._has_analyzable_text():
                     await self._buffer_add(message)
             return
