@@ -302,7 +302,8 @@ class Krorus(commands.Bot):
         vt_api_key: str | None,
         session: aiohttp.ClientSession,
     ):
-        """Escanea enlaces y transcribe audio de un mensaje recuperado por lookback."""
+        """Escanea enlaces, registra multimedia y transcribe audio
+        de un mensaje recuperado por lookback."""
         m = Message(msg)
 
         alert_url, dominio, url = await m.CheckAndAlert(vt_api_key, session)
@@ -310,6 +311,18 @@ class Krorus(commands.Bot):
             await self._send_alert(
                 msg, "", "⚠️ Enlace sensible (lookback)",
                 f"**Dominio:** {dominio}\n**URL:** {url}",
+            )
+
+        media_atts = [
+            a for a in msg.attachments
+            if a.content_type and a.content_type.startswith(("image/", "video/", "file/"))
+        ]
+        if media_atts:
+            files = [await a.to_file() for a in media_atts[:10]]
+            await self._send_alert(
+                msg, "", f"📁 {len(media_atts)} archivo(s) (lookback)",
+                Message._describe_attachments(media_atts),
+                file=files,
             )
 
         for a in msg.attachments:
