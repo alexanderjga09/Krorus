@@ -241,7 +241,7 @@ class Krorus(commands.Bot):
         que otro usuario hable en el canal o pasen 60s sin actividad.
         Si lookback=True, busca mensajes recientes del mismo autor (≤60s)
         que no fueron capturados (ej: anteriores a una mención) y los incluye,
-        y escanea sus enlaces si se proporcionan vt_api_key y session."""
+        y escanea sus enlaces, EXIF y audio si se proporcionan vt_api_key y session."""
         channel_id = message.channel.id
 
         if self._is_flagged(message.id):
@@ -262,6 +262,7 @@ class Krorus(commands.Bot):
                         msg.author.id == message.author.id
                         and not msg.author.bot
                         and not self._is_flagged(msg.id)
+                        and not self._was_in_buffer(msg.id)
                     ):
                         self._buffered_msg_ids[msg.id] = buf_expiry
                         recent_msgs.append(msg)
@@ -271,13 +272,7 @@ class Krorus(commands.Bot):
             if vt_api_key is not None and session is not None:
                 for msg in recent_msgs:
                     try:
-                        m = Message(msg)
-                        alert_url, dominio, url = await m.CheckAndAlert(vt_api_key, session)
-                        if alert_url:
-                            await self._send_alert(
-                                msg, "", "⚠️ Enlace sensible (lookback)",
-                                f"**Dominio:** {dominio}\n**URL:** {url}",
-                            )
+                        await self._scan_lookback_msg(msg, vt_api_key, session)
                     except Exception:
                         pass
 
@@ -300,6 +295,29 @@ class Krorus(commands.Bot):
                 "messages": [*recent_msgs, message],
                 "task": asyncio.create_task(self._buffer_auto_flush(channel_id)),
             }
+
+    async def _scan_lookback_msg(
+        self,
+        msg: discord.Message,
+        vt_api_key: str | None,
+        session: aiohttp.ClientSession,
+    ):
+        """Escanea enlaces y transcribe audio de un mensaje recuperado por lookback."""
+        m = Message(msg)
+
+        alert_url, dominio, url = await m.CheckAndAlert(vt_api_key, session)
+        if alert_url:
+            await self._send_alert(
+                msg, "", "⚠️ Enlace sensible (lookback)",
+                f"**Dominio:** {dominio}\n**URL:** {url}",
+            )
+
+        for a in msg.attachments:
+            if a.content_type and a.content_type.startswith("audio/"):
+                result = await m.transcribe_audio(GROQ_CLIENT, member=msg.author, attachment=a)
+                if result:
+                    _, title, details, audio_file = result
+                    await self._send_alert(msg, "", title, details, file=audio_file)
 
     def _buffer_has_active(self, channel_id: int, user_id: int) -> bool:
         """Chequeo rápido (sin lock) si un usuario tiene buffer activo en un canal."""
