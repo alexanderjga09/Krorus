@@ -230,11 +230,18 @@ class Krorus(commands.Bot):
             return False
         return True
 
-    async def _buffer_add(self, message: discord.Message, lookback: bool = False):
+    async def _buffer_add(
+        self,
+        message: discord.Message,
+        lookback: bool = False,
+        vt_api_key: str | None = None,
+        session: aiohttp.ClientSession | None = None,
+    ):
         """Buffer de mensajes: acumula texto de usuarios protegidos hasta
         que otro usuario hable en el canal o pasen 60s sin actividad.
         Si lookback=True, busca mensajes recientes del mismo autor (≤60s)
-        que no fueron capturados (ej: anteriores a una mención) y los incluye."""
+        que no fueron capturados (ej: anteriores a una mención) y los incluye,
+        y escanea sus enlaces si se proporcionan vt_api_key y session."""
         channel_id = message.channel.id
 
         if self._is_flagged(message.id):
@@ -261,6 +268,18 @@ class Krorus(commands.Bot):
                 recent_msgs.reverse()
             except Exception:
                 pass
+            if vt_api_key is not None and session is not None:
+                for msg in recent_msgs:
+                    try:
+                        m = Message(msg)
+                        alert_url, dominio, url = await m.CheckAndAlert(vt_api_key, session)
+                        if alert_url:
+                            await self._send_alert(
+                                msg, "", "⚠️ Enlace sensible (lookback)",
+                                f"**Dominio:** {dominio}\n**URL:** {url}",
+                            )
+                    except Exception:
+                        pass
 
         async with self._buffer_lock:
             if channel_id in self._msg_buffer:
@@ -644,7 +663,7 @@ class Krorus(commands.Bot):
             if results is not None:
                 # Buffer solo si el texto es analizable
                 if message.content.strip() and await msg._has_analyzable_text():
-                    await self._buffer_add(message, lookback=True)
+                    await self._buffer_add(message, lookback=True, vt_api_key=vt_api_key, session=session)
                 return
             # Sin protegido involucrado en el reply → NO retornar: el mensaje
             # puede mencionar a un protegido en el texto (seccion 2) o venir
@@ -676,7 +695,7 @@ class Krorus(commands.Bot):
                 and message.content.strip()
                 and await msg._has_analyzable_text()
             ):
-                await self._buffer_add(message, lookback=True)
+                await self._buffer_add(message, lookback=True, vt_api_key=vt_api_key, session=session)
 
             # Si se mencionó a un protegido, salir (ya procesado)
             if results is not None:
