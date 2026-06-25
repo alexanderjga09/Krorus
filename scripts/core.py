@@ -243,6 +243,8 @@ class Krorus(commands.Bot):
         recent_msgs: list[discord.Message] = []
         now = time.time()
         buf_expiry = now + 300.0
+        self._buffered_msg_ids[message.id] = buf_expiry
+        logger.debug(f"[BUFFER] add msg {message.id} de {message.author} en #{message.channel}")
         if lookback:
             try:
                 cutoff = message.created_at - datetime.timedelta(seconds=60)
@@ -260,7 +262,6 @@ class Krorus(commands.Bot):
             except Exception:
                 pass
 
-        self._buffered_msg_ids[message.id] = buf_expiry
         async with self._buffer_lock:
             if channel_id in self._msg_buffer:
                 info = self._msg_buffer[channel_id]
@@ -849,7 +850,7 @@ class Krorus(commands.Bot):
             except discord.NotFound:
                 pass
 
-        if not (author_is_protected or mentions_protected or replies_to_protected):
+        if not (author_is_protected or mentions_protected or replies_to_protected or self._was_in_buffer(after.id)):
             return
 
         await self._send_alert(
