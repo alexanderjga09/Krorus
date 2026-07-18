@@ -1,0 +1,1464 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Krorus — Paper Técnico</title>
+    <style>
+        /* Reset and base styles */
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            line-height: 1.6;
+            color: #e0e0e0;
+            background-color: #1a1a2e;
+            padding: 0;
+            margin: 0;
+        }
+
+        /* Layout */
+        .container {
+            display: flex;
+            min-height: 100vh;
+        }
+
+        /* Sidebar navigation */
+        .sidebar {
+            width: 280px;
+            background-color: #16213e;
+            padding: 20px;
+            position: fixed;
+            height: 100vh;
+            overflow-y: auto;
+            border-right: 1px solid #0f3460;
+        }
+
+        .sidebar h2 {
+            color: #e94560;
+            margin-bottom: 20px;
+            font-size: 1.2rem;
+            padding-bottom: 10px;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        .sidebar nav ul {
+            list-style: none;
+        }
+
+        .sidebar nav ul li {
+            margin-bottom: 8px;
+        }
+
+        .sidebar nav ul li a {
+            color: #a0a0a0;
+            text-decoration: none;
+            display: block;
+            padding: 8px 12px;
+            border-radius: 4px;
+            transition: all 0.3s ease;
+            font-size: 0.9rem;
+        }
+
+        .sidebar nav ul li a:hover {
+            background-color: #0f3460;
+            color: #e94560;
+        }
+
+        /* Main content */
+        .main-content {
+            margin-left: 280px;
+            padding: 40px;
+            flex: 1;
+            max-width: 900px;
+        }
+
+        /* Typography */
+        h1 {
+            color: #e94560;
+            font-size: 2.5rem;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e94560;
+            padding-bottom: 10px;
+        }
+
+        h2 {
+            color: #e94560;
+            font-size: 1.8rem;
+            margin: 30px 0 15px 0;
+            padding-bottom: 8px;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        h3 {
+            color: #ff6b6b;
+            font-size: 1.3rem;
+            margin: 25px 0 10px 0;
+        }
+
+        p {
+            margin-bottom: 15px;
+            color: #c0c0c0;
+        }
+
+        /* Blockquotes */
+        blockquote {
+            background-color: #16213e;
+            border-left: 4px solid #e94560;
+            padding: 15px 20px;
+            margin: 20px 0;
+            border-radius: 0 4px 4px 0;
+            color: #a0a0a0;
+        }
+
+        blockquote p {
+            margin-bottom: 0;
+        }
+
+        blockquote strong {
+            color: #e94560;
+        }
+
+        /* Code blocks */
+        pre {
+            background-color: #0d1117;
+            border: 1px solid #30363d;
+            border-radius: 6px;
+            padding: 16px;
+            overflow-x: auto;
+            margin: 20px 0;
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            font-size: 0.9rem;
+            line-height: 1.5;
+            color: #c9d1d9;
+        }
+
+        code {
+            font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
+            background-color: #0d1117;
+            padding: 2px 6px;
+            border-radius: 3px;
+            font-size: 0.9em;
+            color: #e94560;
+        }
+
+        pre code {
+            background-color: transparent;
+            padding: 0;
+            color: inherit;
+        }
+
+        /* Tables */
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+            background-color: #16213e;
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        th, td {
+            padding: 12px 15px;
+            text-align: left;
+            border-bottom: 1px solid #0f3460;
+        }
+
+        th {
+            background-color: #0f3460;
+            color: #e94560;
+            font-weight: 600;
+        }
+
+        tr:nth-child(even) {
+            background-color: #1a1a2e;
+        }
+
+        tr:hover {
+            background-color: #0f3460;
+        }
+
+        /* Lists */
+        ul, ol {
+            margin: 15px 0;
+            padding-left: 30px;
+            color: #c0c0c0;
+        }
+
+        li {
+            margin-bottom: 8px;
+        }
+
+        /* Links */
+        a {
+            color: #e94560;
+            text-decoration: none;
+            transition: color 0.3s ease;
+        }
+
+        a:hover {
+            color: #ff6b6b;
+            text-decoration: underline;
+        }
+
+        /* Horizontal rule */
+        hr {
+            border: none;
+            height: 1px;
+            background: linear-gradient(to right, transparent, #e94560, transparent);
+            margin: 30px 0;
+        }
+
+        /* Strong and emphasis */
+        strong {
+            color: #e94560;
+        }
+
+        em {
+            color: #ff6b6b;
+        }
+
+        /* Responsive design */
+        @media (max-width: 768px) {
+            .container {
+                flex-direction: column;
+            }
+
+            .sidebar {
+                width: 100%;
+                height: auto;
+                position: relative;
+                border-right: none;
+                border-bottom: 1px solid #0f3460;
+            }
+
+            .main-content {
+                margin-left: 0;
+                padding: 20px;
+            }
+
+            h1 {
+                font-size: 2rem;
+            }
+
+            h2 {
+                font-size: 1.5rem;
+            }
+
+            pre {
+                font-size: 0.8rem;
+            }
+        }
+
+        /* Scrollbar styling */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: #1a1a2e;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #0f3460;
+            border-radius: 4px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: #e94560;
+        }
+
+        /* Header styling for metadata */
+        .header-meta {
+            background-color: #16213e;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 25px;
+            border-left: 4px solid #e94560;
+        }
+
+        .header-meta p {
+            margin-bottom: 5px;
+            color: #a0a0a0;
+        }
+
+        .header-meta strong {
+            color: #e94560;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <aside class="sidebar">
+            <h2>Índice</h2>
+            <nav>
+                <ul>
+                    <li><a href="#1-resumen-ejecutivo">1. Resumen Ejecutivo</a></li>
+                    <li><a href="#2-arquitectura-general">2. Arquitectura General</a></li>
+                    <li><a href="#3-flujo-de-datos">3. Flujo de Datos</a></li>
+                    <li><a href="#4-módulos-del-sistema">4. Módulos del Sistema</a></li>
+                    <li><a href="#5-sistema-de-análisis-con-ia-groq">5. Sistema de Análisis con IA</a></li>
+                    <li><a href="#6-cadena-de-bloques-de-alertas-chainlog">6. Cadena de Bloques</a></li>
+                    <li><a href="#7-sistema-de-cifrado-whisper">7. Sistema de Cifrado</a></li>
+                    <li><a href="#8-análisis-de-urls-y-dominios">8. Análisis de URLs</a></li>
+                    <li><a href="#9-análisis-de-metadatos-exif">9. Análisis de Metadatos EXIF</a></li>
+                    <li><a href="#10-transcripción-de-audio">10. Transcripción de Audio</a></li>
+                    <li><a href="#11-sistema-de-rate-limiting-y-pool-de-keys">11. Rate Limiting</a></li>
+                    <li><a href="#12-sistema-de-buffer-y-lote-de-mensajes">12. Buffer y Lote</a></li>
+                    <li><a href="#13-seguridad-y-permisos">13. Seguridad</a></li>
+                    <li><a href="#14-infraestructura-técnica">14. Infraestructura</a></li>
+                    <li><a href="#15-preguntas-frecuentes">15. Preguntas Frecuentes</a></li>
+                </ul>
+            </nav>
+        </aside>
+
+        <main class="main-content">
+            <h1>Krorus — Paper Técnico</h1>
+
+            <div class="header-meta">
+                <p><strong>Versión:</strong> 1.0 | <strong>Última actualización:</strong> Junio 2026</p>
+                <p><strong>Autor:</strong> AlexanderJGA</p>
+                <p><strong>Repositorio:</strong> <a href="https://github.com/alexanderjga09/Krorus">https://github.com/alexanderjga09/Krorus</a></p>
+            </div>
+
+            <hr>
+
+            <section id="1-resumen-ejecutivo">
+                <h2>1. Resumen Ejecutivo</h2>
+
+                <p><strong>Krorus</strong> es un bot de Discord privado diseñado para la <strong>protección de menores de edad</strong> dentro de un servidor. Su propósito es monitorear la actividad de usuarios marcados con un rol especial llamado <strong>Protegido</strong> — asignado exclusivamente a miembros menores de edad —, registrar alertas de forma segura y notificar al equipo de staff ante comportamientos sospechosos, sin intervenir públicamente en el chat.</p>
+
+                <h3>Características Principales</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Característica</th>
+                            <th>Detalle</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Plataforma</strong></td>
+                            <td>Discord (py-cord 2.7.2)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>IA utilizada</strong></td>
+                            <td>Groq (Llama 3.3 70B para análisis + Whisper para audio)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Análisis de URLs</strong></td>
+                            <td>VirusTotal API + listas locales de dominios</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Servidor único</strong></td>
+                            <td>Solo opera en el servidor configurado (<code>Allowed Guild ID</code>)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Visibilidad</strong></td>
+                            <td>Invisible en Discord (estado offline)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Persistencia</strong></td>
+                            <td>Cadena de bloques local con integridad verificable (SHA-256)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Interfaz</strong></td>
+                            <td>GUI de escritorio (Flet) para configuración y gestión</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Modelo de Amenaza</h3>
+
+                <p>Krorus opera bajo el principio de que <strong>el staff del servidor es confiable</strong>. El bot:</p>
+                <ul>
+                    <li>Intercepta mensajes privados (<code>/whisper</code>) cuando un menor está involucrado.</li>
+                    <li>Almacena claves privadas RSA sin cifrar en el servidor (necesario por diseño).</li>
+                    <li>Envía alertas solo a un canal privado de staff.</li>
+                    <li>Nunca publica información en canales públicos.</li>
+                </ul>
+            </section>
+
+            <hr>
+
+            <section id="2-arquitectura-general">
+                <h2>2. Arquitectura General</h2>
+
+                <h3>Estructura del Proyecto</h3>
+
+                <pre><code>Krorus/
+├── main.py                    # Punto de entrada
+├── setup_gui.py               # Lanzador de la GUI
+├── start.bat                  # Lanzador Windows
+│
+├── scripts/                   # Código fuente del bot
+│   ├── core.py                # Clase principal Krorus (Bot)
+│   ├── cogs/                  # Comandos slash de Discord
+│   │   ├── append_alertdomain.py
+│   │   ├── append_ignoreword.py
+│   │   ├── append_whitelist.py
+│   │   ├── check_user.py
+│   │   ├── exif_check.py
+│   │   ├── health.py
+│   │   ├── list_users.py
+│   │   ├── set_data.py
+│   │   └── whisper.py
+│   └── modules/               # Lógica central
+│       ├── message.py         # Análisis de mensajes + RateLimiter
+│       ├── chainlog.py        # Wrapper de la cadena de bloques
+│       ├── database.py        # SQLite (configuración)
+│       ├── rsa.py             # Cifrado híbrido AES+RSA
+│       ├── exif_checker.py    # Análisis EXIF
+│       ├── misconduct_cache.py # Caché de clasificaciones IA
+│       ├── pagination.py      # Paginador de Discord
+│       ├── code.py            # Generador de códigos de alerta
+│       └── utils.py           # Utilidades generales
+│
+├── crates/                    # Extensiones nativas Rust
+│   ├── chainlog_rs/           # Cadena de bloques (SHA-256)
+│   └── exif_rs/               # Extracción EXIF rápida
+│
+├── gui/                       # Interfaz gráfica de escritorio
+│   ├── core.py                # Widgets, consola, logging
+│   ├── ui.py                  # Layout, pestañas, selectors
+│   └── actions.py             # Setup, start/stop, git, backups
+│
+├── tests/                     # Suite de pruebas
+├── data/                      # Datos en runtime
+└── .env                       # Secrets (TOKEN, API keys)</code></pre>
+
+                <h3>Diagrama de Componentes</h3>
+
+                <pre><code>┌─────────────────────────────────────────────────────┐
+│                    Discord API                       │
+└──────────────────────┬──────────────────────────────┘
+                       │
+┌──────────────────────▼──────────────────────────────┐
+│              Krorus (Bot Principal)                  │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐ │
+│  │   Cogs      │  │   Modules    │  │   Crates   │ │
+│  │ (Comandos)  │  │  (Lógica)    │  │  (Rust)    │ │
+│  └──────┬──────┘  └──────┬───────┘  └─────┬──────┘ │
+│         │                │                 │         │
+│         ▼                ▼                 ▼         │
+│  ┌─────────────┐  ┌──────────────┐  ┌────────────┐ │
+│  │ set_data    │  │ message.py   │  │ chainlog_rs│ │
+│  │ check_user  │  │ rsa.py       │  │ exif_rs    │ │
+│  │ whisper     │  │ exif_checker │  └────────────┘ │
+│  │ health      │  │ database.py  │                  │
+│  │ ...         │  │ cache.py     │                  │
+│  └─────────────┘  └──────┬───────┘                  │
+│                          │                           │
+└──────────────────────────┼───────────────────────────┘
+                           │
+              ┌────────────┼────────────┐
+              ▼            ▼            ▼
+        ┌──────────┐ ┌──────────┐ ┌──────────┐
+        │  Groq    │ │VirusTotal│ │  SQLite  │
+        │  API     │ │   API    │ │   DB     │
+        └──────────┘ └──────────┘ └──────────┘</code></pre>
+            </section>
+
+            <hr>
+
+            <section id="3-flujo-de-datos">
+                <h2>3. Flujo de Datos</h2>
+
+                <h3>Proceso de Análisis de un Mensaje</h3>
+
+                <p>Cuando el bot recibe un mensaje en Discord, se ejecuta el siguiente proceso:</p>
+
+                <pre><code>Mensaje Recibido
+       │
+       ▼
+┌──────────────────┐
+│ Filtros Iniciales│  ¿Es bot? ¿Es DM? ¿Guild correcto?
+│                  │  ¿Está en rate limit?
+└────────┬─────────┘
+         │ Pass
+         ▼
+┌──────────────────┐
+│ ¿Es respuesta a  │
+│ mensaje protegido?│──SÍ──► Analizar mensaje referenciado
+│                  │        (adjuntos, URLs, audio, EXIF)
+└────────┬─────────┘
+         │ NO
+         ▼
+┌──────────────────┐
+│ ¿Menciona a un   │
+│ protegido?       │──SÍ──► Analizar mensaje con menciones
+│                  │        (adjuntos, URLs, audio, EXIF)
+└────────┬─────────┘
+         │ NO
+         ▼
+┌──────────────────┐
+│ ¿Autor es        │
+│ protegido?       │──SÍ──► Procesar según config:
+│                  │        - URLs → VirusTotal/listas
+│                  │        - Audio → Transcribir
+│                  │        - Imágenes → EXIF + reenviar
+│                  │        - Texto → Buffer para Groq
+└────────┬─────────┘
+         │ NO
+         ▼
+┌──────────────────┐
+│ Procesar adjuntos│  Solo URLs, media, audio (sin análisis
+│ (si hay buffer)  │  de misconduct para no-protegidos)
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Flush del Buffer │  Se combinan mensajes del mismo usuario
+│                  │  en los últimos 60 segundos
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Análisis Groq    │  Texto combinado → Llama 3.3 70B
+│ (Misconduct)     │  Respuesta: "True" o "False"
+└────────┬─────────┘
+         │ "True"
+         ▼
+┌──────────────────┐
+│ Generar Alerta   │  Código único → ChainLog → Canal staff
+│                  │  Embed con detalles del usuario
+└──────────────────┘</code></pre>
+
+                <h3>Prioridad de Procesamiento</h3>
+
+                <p>El bot procesa los mensajes en este orden de prioridad:</p>
+
+                <ol>
+                    <li><strong>Respuesta a un protegido</strong> → Se analiza el contenido del mensaje respondido</li>
+                    <li><strong>Mención a un protegido</strong> → Se analiza el contenido del mensaje</li>
+                    <li><strong>Mensaje enviado por un protegido</strong> → Se analiza en busca de:
+                        <ul>
+                            <li>Enlaces sensibles (alert_domains o VirusTotal)</li>
+                            <li>Contenido inapropiado (Groq IA)</li>
+                            <li>Audios (transcripción Groq Whisper)</li>
+                            <li>Imágenes/videos/archivos (reenvío al staff)</li>
+                            <li>Metadatos EXIF (GPS, serial de cámara, etc.)</li>
+                        </ul>
+                    </li>
+                </ol>
+            </section>
+
+            <hr>
+
+            <section id="4-módulos-del-sistema">
+                <h2>4. Módulos del Sistema</h2>
+
+                <h3>4.1 <code>message.py</code> — Corre del Análisis</h3>
+
+                <p>Este es el módulo más importante del bot. Contiene:</p>
+
+                <ul>
+                    <li><strong><code>Message</code></strong>: Clase que envuelve un <code>discord.Message</code> de Discord</li>
+                    <li><strong><code>GroqRateLimiter</code></strong>: Gestor de rate limiting con pool de keys</li>
+                    <li><strong><code>groq_rate_limiter</code></strong>: Instancia singleton del rate limiter</li>
+                    <li><strong><code>MisconductPrompt</code></strong>: Prompt para detección de conducta inapropiada</li>
+                </ul>
+
+                <p>Funciones principales:</p>
+
+                <pre><code># Análisis de URLs
+Message.CheckAndAlert()  # Escanea URLs con listas locales y VirusTotal
+
+# Análisis de conducta
+Message.Misconduct()     # Evalúa texto con Groq (True/False)
+
+# Transcripción
+Message.transcribe_audio()  # Transcribe audio con Groq Whisper
+
+# EXIF
+Message.check_exif_sensible()  # Analiza metadatos de imágenes</code></pre>
+
+                <h3>4.2 <code>database.py</code> — Persistencia SQLite</h3>
+
+                <p>Almacena la configuración del servidor en un solo registro:</p>
+
+                <pre><code>CREATE TABLE settings (
+    id INTEGER PRIMARY KEY,
+    staff_channel_id TEXT,
+    protected_role_id TEXT
+);</code></pre>
+
+                <p>Características:</p>
+                <ul>
+                    <li><strong>Backups automáticos</strong>: Máximo 5 backups con timestamps</li>
+                    <li><strong>Escritura atómica</strong>: Usa transacciones SQLite</li>
+                    <li><strong>Restauración</strong>: <code>restore_latest_backup()</code> desde el backup más reciente</li>
+                </ul>
+
+                <h3>4.3 <code>rsa.py</code> — Cifrado Híbrido</h3>
+
+                <p>Implementa cifrado híbrido <strong>AES-256-GCM + RSA-OAEP</strong> para <code>/whisper</code>:</p>
+
+                <pre><code>Mensaje original
+       │
+       ▼
+┌──────────────────┐
+│ Generar clave AES│  Clave aleatoria de 256 bits
+│ aleatoria        │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Cifrar mensaje   │  AES-256-GCM (confidencialidad + integridad)
+│ con AES          │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Cifrar clave AES │  RSA-OAEP con clave pública del destinatario
+│ con RSA          │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Formato final:   │  base64(rsa_encrypted_key || nonce || aes_ciphertext)
+│ base64           │
+└──────────────────┘</code></pre>
+
+                <h3>4.4 <code>chainlog.py</code> — Cadena de Bloques</h3>
+
+                <p>Wrapper Python del crate Rust <code>chainlog_rs</code>. Cada llamada crea una <strong>nueva instancia</strong> (diseño deliberado):</p>
+
+                <pre><code>def get_chain_log() -&gt; ChainLog:
+    return ChainLog(str(_CHAIN_FILE))  # Siempre lee desde disco</code></pre>
+
+                <p>Esto garantiza que ediciones externas al archivo sean detectadas por la verificación de integridad.</p>
+            </section>
+
+            <hr>
+
+            <section id="5-sistema-de-análisis-con-ia-groq">
+                <h2>5. Sistema de Análisis con IA (Groq)</h2>
+
+                <h3>Modelo Utilizado</h3>
+
+                <ul>
+                    <li><strong>Modelo de texto</strong>: <code>llama-3.3-70b-versatile</code> (70B parámetros)</li>
+                    <li><strong>Modelo de audio</strong>: <code>whisper-large-v3-turbo</code></li>
+                    <li><strong>Temperatura</strong>: 0.0 (respuestas deterministas)</li>
+                    <li><strong>Timeout</strong>: 10 segundos por petición</li>
+                </ul>
+
+                <h3>Prompt de Moderación</h3>
+
+                <p>El prompt le indica a la IA que actúe como "Moderador de Contenido" y evalúe si el texto contiene:</p>
+
+                <ul>
+                    <li>Insultos, acoso o bullying</li>
+                    <li>Contenido sexual o sugestivo</li>
+                    <li>Grooming o conducta depredadora</li>
+                    <li>Incitación al odio o violencia</li>
+                    <li>Doxing o información personal</li>
+                    <li>Evasión mediante leetspeak, espaciado o roleplay</li>
+                </ul>
+
+                <h3>Respuesta</h3>
+
+                <p>La IA responde exclusivamente <code>True</code> o <code>False</code>:</p>
+                <ul>
+                    <li><strong><code>True</code></strong>: El texto contiene conducta inapropiada → Se genera alerta</li>
+                    <li><strong><code>False</code></strong>: El texto es seguro → No se genera alerta</li>
+                </ul>
+
+                <h3>Caché de Clasificaciones</h3>
+
+                <pre><code># Caché LRU en memoria
+_MISCONDUCT_CACHE: dict[str, dict] = {}  # SHA256 → {result, timestamp}
+_MISCONDUCT_CACHE_MAX = 512              # Entradas máximas
+_MISCONDUCT_CACHE_TTL = 300              # TTL: 5 minutos</code></pre>
+
+                <p>El caché almacena resultados keyed por SHA-256 del texto normalizado, evitando llamadas repetidas a la API para el mismo contenido.</p>
+            </section>
+
+            <hr>
+
+            <section id="6-cadena-de-bloques-de-alertas-chainlog">
+                <h2>6. Cadena de Bloques de Alertas (ChainLog)</h2>
+
+                <h3>Diseño</h3>
+
+                <p>ChainLog implementa una <strong>blockchain local</strong> para garantizar la integridad de las alertas:</p>
+
+                <pre><code>Bloque 0 (Génesis)          Bloque 1 (Alerta)           Bloque 2 (Indulto)
+┌─────────────────┐        ┌─────────────────┐        ┌─────────────────┐
+│ index: 0        │        │ index: 1        │        │ index: 2        │
+│ timestamp: ...  │        │ timestamp: ...  │        │ timestamp: ...  │
+│ data: "genesis" │        │ data: {...}     │        │ data: {...}     │
+│ prev: "0"*64    │        │ prev: hash[0]   │        │ prev: hash[1]   │
+│ hash: sha256()  │        │ hash: sha256()  │        │ hash: sha256()  │
+│ type: genesis   │        │ type: alert     │        │ type: pardon    │
+└─────────────────┘        └─────────────────┘        └─────────────────┘</code></pre>
+
+                <h3>Estructura de un Bloque de Alerta</h3>
+
+                <pre><code>{
+    "index": 1,
+    "timestamp": "2026-06-29T15:30:00",
+    "data": {
+        "user_id": "123456789",
+        "code": "a1b2c3d4e5",
+        "reason": "Insulto detectado por IA",
+        "jump_url": "https://discord.com/channels/..."
+    },
+    "previous_hash": "0000...0000",
+    "hash": "abc123...",
+    "block_type": "alert"
+}</code></pre>
+
+                <h3>Estructura de un Bloque de Indulto</h3>
+
+                <pre><code>{
+    "index": 2,
+    "timestamp": "2026-06-29T16:00:00",
+    "data": {
+        "original_index": 1,
+        "moderator_id": "987654321",
+        "reason": "Falso positivo, era broma entre amigos"
+    },
+    "previous_hash": "abc123...",
+    "hash": "def456...",
+    "block_type": "pardon"
+}</code></pre>
+
+                <h3>Verificación de Integridad</h3>
+
+                <p>El comando <code>/verify-chain</code> ejecuta:</p>
+
+                <pre><code>// En Rust (chainlog_rs)
+fn verify_chain(&amp;self) -&gt; bool {
+    let mut prev_hash = "0".repeat(64);  // Génesis
+    for block in &amp;self.blocks {
+        let computed = compute_hash(block.index, &amp;block.timestamp, &amp;block.data, &amp;prev_hash);
+        if computed != block.hash {
+            return false;  // ¡Cadena manipulada!
+        }
+        prev_hash = block.hash.clone();
+    }
+    true
+}</code></pre>
+
+                <h3>Modelo de Indulto</h3>
+
+                <p>Las alertas <strong>nunca se eliminan</strong>. Un indulto agrega un nuevo bloque que referencia la alerta original. El comando <code>/list-users</code> muestra solo alertas activas (sin indulto).</p>
+            </section>
+
+            <hr>
+
+            <section id="7-sistema-de-cifrado-whisper">
+                <h2>7. Sistema de Cifrado (/whisper)</h2>
+
+                <h3>Flujo Completo</h3>
+
+                <pre><code>Usuario A envía /whisper @UsuarioB "mensaje secreto"
+       │
+       ▼
+┌──────────────────┐
+│ ¿A o B tienen    │
+│ rol Protegido?   │──SÍ──► Enviar contenido al canal staff
+└────────┬─────────┘        (intercepción antes de cifrar)
+         │ NO
+         ▼
+┌──────────────────┐
+│ Obtener clave    │
+│ pública de B     │  from data/keysDB.json
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Cifrar mensaje   │  AES-256-GCM + RSA-OAEP
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Enviar DM a B    │  Botón "Descifrar" (expira 3 min)
+│ con ciphertext   │
+└────────┬─────────┘
+         │ B presiona botón
+         ▼
+┌──────────────────┐
+│ Descifrar con    │
+│ clave privada de B│
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Mostrar mensaje  │  Si A o B es protegido → alerta al staff
+└──────────────────┘</code></pre>
+
+                <h3>Modelo de Amenaza</h3>
+
+                <blockquote>
+                    <p><strong>Importante</strong>: El cifrado protege contra <strong>otros usuarios de Discord</strong>, no contra el operador del bot.</p>
+                </blockquote>
+
+                <ul>
+                    <li>Las claves privadas RSA se almacenan <strong>sin cifrar</strong> en <code>data/keysDB.json</code>.</li>
+                    <li>Esto es <strong>necesario por diseño</strong> para que el staff pueda interceptar whispers que involucran a un menor.</li>
+                    <li>Cualquier persona con acceso al sistema de archivos puede descifrar todos los whispers.</li>
+                    <li><code>data/keysDB.json</code> está excluido de git y se intenta aplicar permisos <code>0600</code>.</li>
+                </ul>
+            </section>
+
+            <hr>
+
+            <section id="8-análisis-de-urls-y-dominios">
+                <h2>8. Análisis de URLs y Dominios</h2>
+
+                <h3>Sistema de Tres Niveles</h3>
+
+                <pre><code>URL detectada en mensaje
+       │
+       ▼
+┌──────────────────┐
+│ ¿Dominio en      │
+│ whitelist.json?  │──SÍ──► OMITIR (no analizar)
+└────────┬─────────┘
+         │ NO
+         ▼
+┌──────────────────┐
+│ ¿Dominio en      │
+│ alert_domains?   │──SÍ──► ALERTA INMEDIATA
+└────────┬─────────┘        (sin VirusTotal)
+         │ NO
+         ▼
+┌──────────────────┐
+│ ¿Es invite de    │
+│ Discord?         │──SÍ──► ALERTA INMEDIATA
+└────────┬─────────┘
+         │ NO
+         ▼
+┌──────────────────┐
+│ VirusTotal API   │  Escaneo con semáforo (4 concurrencia)
+│ (rate limited)   │  Cooldown global 60s en 429
+└──────────────────┘</code></pre>
+
+                <h3>Listas de Dominios</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Lista</th>
+                            <th>Archivo</th>
+                            <th>Propósito</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Alertas</strong></td>
+                            <td><code>data/alert_domains.json</code></td>
+                            <td>Dominios que siempre generan alerta</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Whitelist</strong></td>
+                            <td><code>data/whitelist.json</code></td>
+                            <td>Dominios excluidos de análisis</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Comandos de Gestión</h3>
+
+                <pre><code>/append-alertdomain [dominio]      # Agregar a lista de alertas
+/remove-alert-domain [dominio]     # Remover de lista de alertas
+/view-alert-domains                # Ver todas las alertas
+
+/append-whitelist [dominio]        # Agregar a whitelist
+/remove-whitelist-domain [dominio] # Remover de whitelist
+/view-whitelist                    # Ver whitelist</code></pre>
+            </section>
+
+            <hr>
+
+            <section id="9-análisis-de-metadatos-exif">
+                <h2>9. Análisis de Metadatos EXIF</h2>
+
+                <h3>Implementación Dual</h3>
+
+                <p>Krorus implementa extracción EXIF en dos lenguajes:</p>
+
+                <ol>
+                    <li><strong>Rust (<code>exif_rs</code>)</strong>: Implementación principal usando <code>kamadak-exif</code>. Máximo rendimiento sin bloquear el GIL de Python.</li>
+                    <li><strong>Python (PIL/Pillow)</strong>: Fallback si el crate Rust no está compilado.</li>
+                </ol>
+
+                <h3>Campos Detectados</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Riesgo</th>
+                            <th>Campos</th>
+                            <th>Ejemplo</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>Alto</strong></td>
+                            <td>GPS (lat/lon), Serial de cámara, OwnerName</td>
+                            <td><code>GPS: 40.7128, -74.0060</code></td>
+                        </tr>
+                        <tr>
+                            <td><strong>Medio</strong></td>
+                            <td>Modelo de cámara, Software, Fecha de captura</td>
+                            <td><code>Canon EOS R5</code></td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Proceso</h3>
+
+                <pre><code>Imagen recibida
+       │
+       ▼
+┌──────────────────┐
+│ Intentar exif_rs │  Rust (rápido, sin GIL)
+│ (crate nativo)   │
+└────────┬─────────┘
+         │ Falló
+         ▼
+┌──────────────────┐
+│ Fallback PIL     │  Python (más lento)
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Evaluar campos   │
+│ sensibles        │
+└────────┬─────────┘
+         │ Riesgo alto
+         ▼
+┌──────────────────┐
+│ Generar alerta   │  Incluye GPS, serial, etc.
+│ inmediata        │  al canal de staff
+└──────────────────┘</code></pre>
+
+                <h3>Análisis de ZIPs</h3>
+
+                <p>El sistema también analiza archivos ZIP, extrayendo y verificando EXIF de cada imagen contenida.</p>
+            </section>
+
+            <hr>
+
+            <section id="10-transcripción-de-audio">
+                <h2>10. Transcripción de Audio</h2>
+
+                <h3>Modelo</h3>
+
+                <ul>
+                    <li><strong>API</strong>: Groq Whisper (<code>whisper-large-v3-turbo</code>)</li>
+                    <li><strong>Proceso</strong>: Audio → Transcripción → Análisis de texto con Llama 3.3 70B</li>
+                </ul>
+
+                <h3>Flujo</h3>
+
+                <pre><code>Audio de Discord (.ogg, .mp3, etc.)
+       │
+       ▼
+┌──────────────────┐
+│ Descargar audio  │  bytes del attachment
+│ a archivo temporal│
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Enviar a Groq    │  whisper-large-v3-turbo
+│ Whisper API      │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Texto transcrito │
+│ → Misconduct()   │  Análisis con Llama 3.3 70B
+└──────────────────┘</code></pre>
+            </section>
+
+            <hr>
+
+            <section id="11-sistema-de-rate-limiting-y-pool-de-keys">
+                <h2>11. Sistema de Rate Limiting y Pool de Keys</h2>
+
+                <h3>Arquitectura del RateLimiter</h3>
+
+                <pre><code>class GroqRateLimiter:
+    """Sala de espera con pool de keys API"""
+    
+    # Configuración por defecto
+    max_calls = 25        # Llamadas por ventana
+    window = 60.0         # Ventana de 60 segundos
+    max_waiting = 40      # Cola máxima de espera
+    overflow_reserve = 5  # Slots extra para overflow</code></pre>
+
+                <h3>Selección de Key</h3>
+
+                <pre><code>def _best_key(self, now: float) -&gt; tuple[int, float]:
+    """Selecciona la key con menor tiempo de espera"""
+    best_idx = 0
+    best_wait = float("inf")
+    for i in range(len(self._key_states)):
+        w = self._waits(now, i)  # Calcula espera para cada key
+        if w &lt; best_wait:
+            best_wait = w
+            best_idx = i
+    return best_idx, best_wait</code></pre>
+
+                <h3>Sistema de Overflow</h3>
+
+                <p>Cuando la cola está llena (>= 40 esperando):</p>
+
+                <pre><code>Request nueva
+       │
+       ▼
+┌──────────────────┐
+│ Cola llena       │
+│ (40 esperando)   │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Guardar en       │  data/overflow_queue.json
+│ overflow_queue   │  (archivo JSON persistente)
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Procesar cuando  │  Drain automático después
+│ haya turnos      │  de flush del buffer
+└──────────────────┘</code></pre>
+
+                <h3>Límites por Key (Free Tier Groq)</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Modelo</th>
+                            <th>RPM</th>
+                            <th>RPD</th>
+                            <th>TPM</th>
+                            <th>TPD</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>llama-3.3-70b-versatile</code></td>
+                            <td>30</td>
+                            <td>1,000</td>
+                            <td>12,000</td>
+                            <td>100,000</td>
+                        </tr>
+                        <tr>
+                            <td><code>whisper-large-v3-turbo</code></td>
+                            <td>20</td>
+                            <td>2,000</td>
+                            <td>-</td>
+                            <td>-</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <p>Con 3 keys, el pool ofrece <strong>3x estos límites</strong>.</p>
+            </section>
+
+            <hr>
+
+            <section id="12-sistema-de-buffer-y-lote-de-mensajes">
+                <h2>12. Sistema de Buffer y Lote de Mensajes</h2>
+
+                <h3>Propósito</h3>
+
+                <p>El buffer acumula mensajes cortos del mismo usuario para:</p>
+                <ol>
+                    <li>Detectar insultos escritos en múltiples mensajes</li>
+                    <li>Reducir llamadas a la API de Groq</li>
+                    <li>Capturar mensajes previos no procesados (lookback)</li>
+                </ol>
+
+                <h3>Mecanismo</h3>
+
+                <pre><code>Usuario A escribe: "Hola"
+       │
+       ▼
+┌──────────────────┐
+│ Agregar a buffer │  _msg_buffer[channel][author] = [msgs]
+│ del canal        │
+└────────┬─────────┘
+         │
+         ▼
+Usuario B escribe: "¿Qué tal?"
+       │
+       ▼
+┌──────────────────┐
+│ Flush del buffer │  ¿Otro usuario habló? → FLUSH
+│ de A             │
+└────────┬─────────┘
+         │
+         ▼
+┌──────────────────┐
+│ Combinar msgs   │  "Hola" → análisis individual
+│ de A             │  (B no estaba en el buffer)
+└──────────────────┘</code></pre>
+
+                <h3>Lookback</h3>
+
+                <p>Cuando se procesa una respuesta/mención, el bot busca mensajes recientes (60s) del autor que no fueron capturados:</p>
+
+                <pre><code>async def _lookback(self, channel, author, since_dt):
+    """Busca mensajes no procesados de un usuario en los últimos 60s"""
+    async for msg in channel.history(after=since_dt, limit=20):
+        if msg.author == author and msg.id not in self._processed_ids:
+            # Procesar adjuntos, URLs, audio</code></pre>
+            </section>
+
+            <hr>
+
+            <section id="13-seguridad-y-permisos">
+                <h2>13. Seguridad y Permisos</h2>
+
+                <h3>Aislamiento de Guild</h3>
+
+                <pre><code>@commands.Cog.listener()
+async def on_ready(self):
+    # Verificar guild permitido
+    if str(self.guild.id) != ALLOWED_GUILD_ID:
+        await self.guild.leave()
+        # Notificar al owner por DM</code></pre>
+
+                <h3>Permisos de Comandos</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Comando</th>
+                            <th>Requiere Admin</th>
+                            <th>Disponible para</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>/set-data</code></td>
+                            <td>Sí</td>
+                            <td>Staff</td>
+                        </tr>
+                        <tr>
+                            <td><code>/reload-config</code></td>
+                            <td>Sí</td>
+                            <td>Staff</td>
+                        </tr>
+                        <tr>
+                            <td><code>/check-user</code></td>
+                            <td>Sí</td>
+                            <td>Staff</td>
+                        </tr>
+                        <tr>
+                            <td><code>/pardon</code></td>
+                            <td>Sí</td>
+                            <td>Staff</td>
+                        </tr>
+                        <tr>
+                            <td><code>/list-users</code></td>
+                            <td>Sí</td>
+                            <td>Staff</td>
+                        </tr>
+                        <tr>
+                            <td><code>/verify-chain</code></td>
+                            <td>No</td>
+                            <td>Todos</td>
+                        </tr>
+                        <tr>
+                            <td><code>/whisper</code></td>
+                            <td>No</td>
+                            <td>Todos</td>
+                        </tr>
+                        <tr>
+                            <td><code>/check-exif</code></td>
+                            <td>Sí</td>
+                            <td>Staff</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Normalización Anti-Evasión</h3>
+
+                <p>El texto se normaliza antes de enviarlo a Groq:</p>
+
+                <pre><code>def _normalize_for_groq(text: str) -&gt; str:
+    # Eliminar caracteres invisibles
+    text = unicodedata.normalize("NFC", text)
+    # Eliminar espacios de ancho cero
+    text = re.sub(r'[\u200b\u200c\u200d\ufeff]', '', text)
+    # Eliminar marcas bidireccionales
+    text = re.sub(r'[\u202a-\u202e\u2066-\u2069]', '', text)
+    return text.strip()</code></pre>
+            </section>
+
+            <hr>
+
+            <section id="14-infraestructura-técnica">
+                <h2>14. Infraestructura Técnica</h2>
+
+                <h3>Dependencias Principales</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Dependencia</th>
+                            <th>Versión</th>
+                            <th>Propósito</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>py-cord</strong></td>
+                            <td>2.7.2</td>
+                            <td>Wrapper de Discord API</td>
+                        </tr>
+                        <tr>
+                            <td><strong>groq</strong></td>
+                            <td>1.2.0</td>
+                            <td>Cliente Groq (LLM + Whisper)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>cryptography</strong></td>
+                            <td>46.0.7</td>
+                            <td>RSA + AES-GCM</td>
+                        </tr>
+                        <tr>
+                            <td><strong>pillow</strong></td>
+                            <td>12.2.0</td>
+                            <td>EXIF fallback (PIL)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>aiohttp</strong></td>
+                            <td>-</td>
+                            <td>HTTP async (VirusTotal)</td>
+                        </tr>
+                        <tr>
+                            <td><strong>python-dotenv</strong></td>
+                            <td>-</td>
+                            <td>Carga de .env</td>
+                        </tr>
+                        <tr>
+                            <td><strong>flet</strong></td>
+                            <td>0.84.0</td>
+                            <td>GUI de escritorio</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Extensiones Rust</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Crate</th>
+                            <th>Dependencias</th>
+                            <th>Propósito</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><strong>chainlog_rs</strong></td>
+                            <td>pyo3, sha2, serde, chrono</td>
+                            <td>Cadena de bloques SHA-256</td>
+                        </tr>
+                        <tr>
+                            <td><strong>exif_rs</strong></td>
+                            <td>pyo3, kamadak-exif</td>
+                            <td>Extracción EXIF rápida</td>
+                        </tr>
+                    </tbody>
+                </table>
+
+                <h3>Perfil de Compilación Rust</h3>
+
+                <pre><code>[profile.release]
+lto = true
+opt-level = 3
+codegen-units = 1
+strip = true</code></pre>
+
+                <h3>Archivos de Datos en Runtime</h3>
+
+                <table>
+                    <thead>
+                        <tr>
+                            <th>Archivo</th>
+                            <th>Propósito</th>
+                            <th>Persistente</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <tr>
+                            <td><code>data/settings.db</code></td>
+                            <td>Configuración SQLite</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/logs.json</code></td>
+                            <td>Cadena de bloques</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/keysDB.json</code></td>
+                            <td>Claves RSA por usuario</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/bot_config.json</code></td>
+                            <td>Toggles de funciones</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/alert_domains.json</code></td>
+                            <td>Dominios de alerta</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/whitelist.json</code></td>
+                            <td>Dominios whitelist</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/ignorewords.json</code></td>
+                            <td>Palabras ignoradas</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/misconduct_cache.json</code></td>
+                            <td>Caché de clasificaciones</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/overflow_queue.json</code></td>
+                            <td>Cola de overflow</td>
+                            <td>Sí</td>
+                        </tr>
+                        <tr>
+                            <td><code>data/krorus.log</code></td>
+                            <td>Log rotativo</td>
+                            <td>Sí</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </section>
+
+            <hr>
+
+            <section id="15-preguntas-frecuentes">
+                <h2>15. Preguntas Frecuentes</h2>
+
+                <h3>¿Krorus es un bot público?</h3>
+
+                <p><strong>No.</strong> Krorus es un bot <strong>privado</strong> que solo opera en un servidor específico. Si se agrega a otro servidor, lo abandona automáticamente y notifica al owner por DM.</p>
+
+                <h3>¿Puedo usar Krorus en mi servidor?</h3>
+
+                <p>Sí, pero debes tener en cuenta:</p>
+                <ul>
+                    <li>Necesitas una cuenta de Groq (gratuita o de pago)</li>
+                    <li>Necesitas una cuenta de VirusTotal (opcional pero recomendada)</li>
+                    <li>El bot es <strong>invisible</strong> — no aparece en la lista de miembros</li>
+                    <li>Las alertas se envían a un canal privado de staff</li>
+                </ul>
+
+                <h3>¿Cuánto cuesta usar Groq?</h3>
+
+                <p>El plan gratuito de Groq ofrece:</p>
+                <ul>
+                    <li>30 requests/minuto</li>
+                    <li>1,000 requests/día (para llama-3.3-70b-versatile)</li>
+                    <li>12,000 tokens/minuto</li>
+                </ul>
+
+                <p>Con 3 keys API, estos límites se <strong>triplican</strong>. Para servidores con mucho tráfico, se recomienda el plan de pago.</p>
+
+                <h3>¿Es seguro el cifrado de /whisper?</h3>
+
+                <p>El cifrado protege contra <strong>otros usuarios de Discord</strong>, no contra el operador del bot. Las claves privadas RSA se almacenan sin cifrar en el servidor (necesario para que el staff pueda interceptar whispers de menores). Si alguien tiene acceso al sistema de archivos, puede descifrar los whispers.</p>
+
+                <h3>¿Cómo funciona la verificación de integridad?</h3>
+
+                <p>El comando <code>/verify-chain</code> recorre toda la cadena de bloques, recalculando el hash SHA-256 de cada bloque y verificando que cada hash referencie correctamente al anterior. Si el archivo <code>logs.json</code> es editado externamente, la verificación falla.</p>
+
+                <h3>¿Qué pasa si Groq se cae?</h3>
+
+                <p>El bot sigue funcionando. Si Groq no está disponible:</p>
+                <ul>
+                    <li>El análisis de misconduct se desactiva temporalmente</li>
+                    <li>Las URLs y EXIF se siguen procesando</li>
+                    <li>Los mensajes se almacenan en la cola de overflow</li>
+                </ul>
+
+                <h3>¿Puedo personalizar el comportamiento del bot?</h3>
+
+                <p>Sí, desde la GUI (pestaña "Funciones"):</p>
+                <ul>
+                    <li>Activar/desactivar funciones individuales</li>
+                    <li>Cambiar configuración sin reiniciar (<code>/reload-config</code>)</li>
+                    <li>Gestionar listas de dominios y palabras ignoradas</li>
+                </ul>
+
+                <h3>¿Cómo se actualiza el bot?</h3>
+
+                <p>Desde la GUI:</p>
+                <ol>
+                    <li>Clic en "Actualizar Proyecto" (ícono de actualización)</li>
+                    <li>El bot ejecuta <code>git pull</code> automáticamente</li>
+                    <li>Se recompilan las dependencias y extensiones Rust</li>
+                    <li>Se reinicia el bot</li>
+                </ol>
+
+                <h3>¿Los datos están respaldados?</h3>
+
+                <p>Sí:</p>
+                <ul>
+                    <li>La base de datos SQLite tiene <strong>backups automáticos</strong> (máximo 5)</li>
+                    <li>La cadena de bloques es <strong>append-only</strong> (nunca se borran alertas)</li>
+                    <li>La GUI permite crear backups manuales y restaurar</li>
+                </ul>
+
+                <h3>¿Puedo ver las alertas de un usuario?</h3>
+
+                <p>Sí, con el comando <code>/check-user @usuario</code>. Muestra:</p>
+                <ul>
+                    <li>Todas las alertas activas</li>
+                    <li>Fechas, códigos y razones</li>
+                    <li>Opción de indultar con <code>/pardon</code></li>
+                </ul>
+            </section>
+
+            <hr>
+
+            <section id="conclusión">
+                <h2>Conclusión</h2>
+
+                <p>Krorus representa un enfoque técnico robusto para la protección de menores en Discord. Combina:</p>
+
+                <ul>
+                    <li><strong>Inteligencia Artificial</strong> (Groq) para detección de conducta inapropiada</li>
+                    <li><strong>Cadena de bloques</strong> para integridad criptográfica de alertas</li>
+                    <li><strong>Cifrado híbrido</strong> para comunicación privada segura</li>
+                    <li><strong>Análisis multiventana</strong> (URLs, EXIF, audio, texto)</li>
+                    <li><strong>Rate limiting inteligente</strong> con pool de keys</li>
+                    <li><strong>Interfaz gráfica</strong> para gestión fácil</li>
+                </ul>
+
+                <p>El diseño prioriza la <strong>seguridad de los menores</strong> sobre la privacidad de los usuarios adultos, con transparencia documentada sobre las implicaciones de seguridad del modelo.</p>
+
+                <hr>
+
+                <p><em>Krorus — Protegiendo menores en Discord con tecnología de vanguardia.</em></p>
+            </section>
+        </main>
+    </div>
+</body>
+</html>
